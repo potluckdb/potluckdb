@@ -16,7 +16,7 @@ pip install --pre potluckdb
 python -c "import potluckdb as sqlite3; print(sqlite3.connect(':memory:').execute('select potluckdb_version()').fetchone())"
 ```
 
-See [Python](/guides/python/), [Node.js](/guides/node/) and [.NET](/guides/dotnet/). For any other
+See [Python](/guides/python/), [Node.js](/guides/node/), [Rust](/guides/rust/), [Go](/guides/go/) and [.NET](/guides/dotnet/). For any other
 program, use the library directly:
 
 ## 1. Download
