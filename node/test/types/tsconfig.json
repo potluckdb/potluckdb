@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "module": "node16",
+    "moduleResolution": "node16",
+    "target": "es2022",
+    "strict": true,
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "files": ["commonjs.cts", "esm.mts", "better-sqlite3-compatible.cts"]
+}

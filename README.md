@@ -36,6 +36,7 @@ Each release lists how to check its files (`SHA256SUMS` and Sigstore signatures)
 | `changes/` | Notes for changes not released yet |
 | `tools/` | Release tooling |
 | `docs/` | The docs site, docs.potluckdb.com ([Starlight](https://starlight.astro.build/)) |
+| `node/` | The Node.js package, `potluckdb` on npm: a drop-in replacement for better-sqlite3 |
 
 Language add-ons, docs and examples arrive here during the 0.8 series. The
 sync engine itself is built in a private repository; its binaries are
