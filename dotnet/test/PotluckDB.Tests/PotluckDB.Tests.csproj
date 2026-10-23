@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- PotluckDB's own checks of the packages: see Program.cs. Uses the packages
+       built in artifacts/packages (test/nuget.config), as an app would. -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net10.0;net8.0</TargetFrameworks>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="PotluckDB.Data.Sqlite" Version="$(PotluckDBVersion)" />
+    <!-- Another SQLite in the same process: e_sqlite3, the library of
+         SQLitePCLRaw's own bundles, and the e_sqlite3 provider class. -->
+    <PackageReference Include="SQLite" Version="3.53.4" />
+    <PackageReference Include="SQLitePCLRaw.provider.e_sqlite3" Version="3.0.5" />
+  </ItemGroup>
+
+</Project>

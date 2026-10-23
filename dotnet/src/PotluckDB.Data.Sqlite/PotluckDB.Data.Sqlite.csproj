@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The package PotluckDB.Data.Sqlite: Microsoft.Data.Sqlite on PotluckDB's
+       SQLite. Like Microsoft.Data.Sqlite (Microsoft.Data.Sqlite.Core plus
+       SQLitePCLRaw.bundle_e_sqlite3), it holds no code: it brings
+       Microsoft.Data.Sqlite.Core and PotluckDB.SQLitePCLRaw. -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <IncludeSymbols>false</IncludeSymbols>
+    <!-- No lib/ folder, on purpose: the package only has dependencies. -->
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
+
+    <PackageId>PotluckDB.Data.Sqlite</PackageId>
+    <Version>$(PotluckDBVersion)</Version>
+    <Authors>PotluckDB</Authors>
+    <Description>Microsoft.Data.Sqlite on PotluckDB's build of SQLite: use it in place of Microsoft.Data.Sqlite, and your code (and Dapper on top) keeps working. For Linux, macOS and Windows.</Description>
+    <PackageTags>potluckdb;sqlite;sqlite3;microsoft.data.sqlite;ado.net;dapper;local-first;sync</PackageTags>
+    <PackageProjectUrl>https://github.com/potluckdb/potluckdb/tree/main/dotnet</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/potluckdb/potluckdb</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
+    <PotluckDBLicenseFile Condition="'$(PotluckDBLicenseFile)' == ''">$(MSBuildThisFileDirectory)../../artifacts/license/LICENSE.txt</PotluckDBLicenseFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite.Core" Version="10.0.12" />
+    <!-- PrivateAssets none: the bundle's build checks (buildTransitive) reach the app too. -->
+    <ProjectReference Include="../PotluckDB.SQLitePCLRaw/PotluckDB.SQLitePCLRaw.csproj" PrivateAssets="none" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="/" />
+    <None Include="$(PotluckDBLicenseFile)" Pack="true" PackagePath="/" Visible="false" />
+  </ItemGroup>
+
+</Project>

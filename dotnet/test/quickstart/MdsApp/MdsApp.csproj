@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net10.0;net8.0</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- was: <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" /> -->
+    <PackageReference Include="PotluckDB.Data.Sqlite" Version="$(PotluckDBVersion)" />
+  </ItemGroup>
+</Project>

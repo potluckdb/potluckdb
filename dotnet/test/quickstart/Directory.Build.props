@@ -1,0 +1,7 @@
+<Project>
+  <!-- The quickstart projects are an app's own projects: they don't take the
+       settings of the projects around them. run.py sets PotluckDBVersion. -->
+  <PropertyGroup>
+    <RestorePackagesPath>$(MSBuildThisFileDirectory)../../artifacts/test-packages/</RestorePackagesPath>
+  </PropertyGroup>
+</Project>
