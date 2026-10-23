@@ -23,8 +23,9 @@ On every other device, the same command (the folder is created if needed):
 potluckdb sync ~/notes s3://my-bucket/notes
 ```
 
-After that, `potluckdb sync ~/notes` is enough. To keep syncing every
-2 seconds until you stop it (Ctrl+C):
+After that, `potluckdb sync ~/notes` is enough. To keep syncing until you
+stop it (Ctrl+C), every second while files change and every 5 seconds when
+quiet:
 
 ```sh
 potluckdb sync ~/notes --watch
