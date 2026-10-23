@@ -6,9 +6,9 @@
 # - Nightly, by hand, or called from another workflow: all 8 platforms.
 # - Every run against a release: the distribution repository's content,
 #   as the artifact potluckdb-go-<version>.
-# - publish: also push that content to potluckdb-go and tag its modules.
-#   It needs the deploy key GO_DIST_DEPLOY_KEY in the environment "go" (see
-#   go/DESIGN.md); release.yml starts it when the repository variable
+# - publish: also push that content to potluckdb-go and tag its modules,
+#   as the potluckdb-release GitHub App (its key is in the environment "go",
+#   see go/DESIGN.md); release.yml starts it when the repository variable
 #   GO_PUBLISHING is true.
 #
 # The checks run against a release's core archives, so nothing runs before
@@ -263,23 +263,28 @@ jobs:
       VERSION: ${{ needs.plan.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: potluckdb-go-${{ needs.plan.outputs.version }}
           path: tree
+      # A token that can write potluckdb-go's contents and nothing else.
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: app
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: potluckdb
+          repositories: potluckdb-go
+          permission-contents: write
       - name: Push to potluckdb-go
         env:
-          DEPLOY_KEY: ${{ secrets.GO_DIST_DEPLOY_KEY }}
+          TOKEN: ${{ steps.app.outputs.token }}
         run: |
-          if [ -z "$DEPLOY_KEY" ]; then
-            echo "::error::The environment \"go\" has no secret GO_DIST_DEPLOY_KEY (a deploy key with write access to potluckdb/potluckdb-go)."
-            exit 1
-          fi
-          mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/potluckdb-go && chmod 600 ~/.ssh/potluckdb-go
-          curl -sSf https://api.github.com/meta | jq -r '.ssh_keys[] | "github.com " + .' > ~/.ssh/known_hosts
-          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/potluckdb-go -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
-          bash go/scripts/publish.sh tree "$VERSION" git@github.com:potluckdb/potluckdb-go.git
+          git config --global http.https://github.com/.extraheader \
+            "AUTHORIZATION: basic $(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)"
+          bash go/scripts/publish.sh tree "$VERSION" https://github.com/potluckdb/potluckdb-go.git
       - name: Ask the Go module proxy for the new versions
         # So the first `go get` does not wait for proxy.golang.org to fetch them.
         run: |

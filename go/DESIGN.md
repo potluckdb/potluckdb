@@ -258,10 +258,13 @@ variable `GO_PUBLISHING` is `true`.
 What publishing needs, to set up once:
 
 - the repository `potluckdb/potluckdb-go` (public, may be empty);
-- a deploy key on it with write access; its private key as the secret
-  `GO_DIST_DEPLOY_KEY` in an environment `go` of `potluckdb/potluckdb`,
-  limited to the `main` branch (a deploy key reaches only that one
-  repository, and needs no user account);
+- the potluckdb-release GitHub App installed on it; the App's ID as the
+  repository variable `RELEASE_APP_ID` and a private key of the App as the
+  secret `RELEASE_APP_PRIVATE_KEY` in an environment `go` of
+  `potluckdb/potluckdb`, limited to the `main` branch. The job asks for a
+  token that can write potluckdb-go's contents and nothing else. (The
+  organisation doesn't allow deploy keys, which would reach only that one
+  repository.)
 - the repository variable `GO_PUBLISHING=true` in `potluckdb/potluckdb`.
 
 In CI, against the release 0.8.0-dev.1 on GitHub's runners, `go.yml`
@@ -278,5 +281,5 @@ test results as above, and skips both Windows platforms with a notice:
 - Windows with the archives as they are: no Go module until the core build
   adds a MinGW library. windows/arm64 has been linked but not run.
 - `go get` through the real proxy.golang.org and sum.golang.org, and pushing
-  to GitHub with the deploy key: tested with a proxy on disk and a local git
+  to GitHub as the App: tested with a proxy on disk and a local git
   repository, which give the same module checksums.

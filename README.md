@@ -48,6 +48,7 @@ See [Sync a folder](docs/src/content/docs/guides/sync-a-folder.md).
 | `tests/` | Tests of the tooling, and the release checks run on every platform, including the frozen math vectors (`tests/vectors`): the exact bits SQL math must give everywhere |
 | `docs/` | The docs site, docs.potluckdb.com ([Starlight](https://starlight.astro.build/)) |
 | `dotnet/` | The .NET packages, `PotluckDB.Data.Sqlite` and `PotluckDB.SQLitePCLRaw` on NuGet: Microsoft.Data.Sqlite, Dapper, EF Core and sqlite-net on PotluckDB |
+| `go/` | The Go package, `github.com/potluckdb/potluckdb-go/sqlite3`: a drop-in replacement for go-sqlite3 (Linux and macOS for now) |
 | `node/` | The Node.js package, `potluckdb` on npm: a drop-in replacement for better-sqlite3 |
 | `python/` | The Python package, `potluckdb` on PyPI: a drop-in replacement for the `sqlite3` module |
 | `rust/` | The Rust packages: PotluckDB's `libsqlite3-sys` for rusqlite, sqlx and diesel, and the `potluckdb` crate on crates.io |
