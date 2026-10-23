@@ -47,8 +47,10 @@ See [Sync a folder](docs/src/content/docs/guides/sync-a-folder.md).
 | `tools/` | Release tooling |
 | `tests/` | Tests of the tooling, and the release checks run on every platform, including the frozen math vectors (`tests/vectors`): the exact bits SQL math must give everywhere |
 | `docs/` | The docs site, docs.potluckdb.com ([Starlight](https://starlight.astro.build/)) |
+| `dotnet/` | The .NET packages, `PotluckDB.Data.Sqlite` and `PotluckDB.SQLitePCLRaw` on NuGet: Microsoft.Data.Sqlite, Dapper, EF Core and sqlite-net on PotluckDB |
 | `node/` | The Node.js package, `potluckdb` on npm: a drop-in replacement for better-sqlite3 |
 | `python/` | The Python package, `potluckdb` on PyPI: a drop-in replacement for the `sqlite3` module |
+| `rust/` | The Rust packages: PotluckDB's `libsqlite3-sys` for rusqlite, sqlx and diesel, and the `potluckdb` crate on crates.io |
 
 Language add-ons, docs and examples arrive here during the 0.8 series. The
 sync engine itself is built in a private repository; its binaries are
