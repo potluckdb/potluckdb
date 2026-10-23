@@ -127,6 +127,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run rust.yml -R "$GITHUB_REPOSITORY" -f version="$VERSION" -f publish=true
+      - name: Publish the .NET packages
+        if: vars.NUGET_PUBLISHING == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run dotnet.yml -R "$GITHUB_REPOSITORY" -f version="$VERSION" -f publish=true
       - name: Publish the npm packages
         # Each registry trusts its own workflow file, so it runs on its own,
         # from the published release's exact archives. On once npm trusts it.

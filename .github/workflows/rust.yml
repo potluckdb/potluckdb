@@ -71,7 +71,12 @@ jobs:
             VERSION=$(gh release list -R "$GITHUB_REPOSITORY" --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName // ""')
             VERSION=${VERSION#v}
           fi
-          if [ -n "$VERSION" ] && gh release view "v$VERSION" -R "$GITHUB_REPOSITORY" --json tagName > /dev/null 2>&1; then
+          if [ "$PUBLISH" = true ] && [ -n "$VERSION" ] &&
+              ! gh api "repos/$GITHUB_REPOSITORY/contents/rust/Cargo.toml?ref=v$VERSION" --silent 2> /dev/null; then
+            # Publishing tags the release's own commit, so it needs rust/ in it.
+            echo "::error::Release v$VERSION predates the Rust packages (its commit has no rust/ folder); the potluckdb crate publishes from the next release on."
+            exit 1
+          elif [ -n "$VERSION" ] && gh release view "v$VERSION" -R "$GITHUB_REPOSITORY" --json tagName > /dev/null 2>&1; then
             echo "Building against PotluckDB $VERSION"
             echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           elif [ "$PUBLISH" = true ]; then
