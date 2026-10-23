@@ -117,24 +117,30 @@ its release-notes commit. The release tag `v<version>` itself then works in
 
 ## Tested
 
-| Platform | How | Result |
-| --- | --- | --- |
-| Linux x64 glibc | WSL (Ubuntu 24.04), and AlmaLinux 8 (glibc 2.28) in Docker | all checks pass |
-| Linux x64 musl | Alpine 3.22 in Docker, and cross-built from glibc | all checks pass |
-| Linux arm64 glibc, musl | cross-built from x64, run under QEMU | quickstarts pass |
-| macOS arm64 | Apple silicon Mac | all checks pass |
-| macOS x64 | cross-built on the Apple silicon Mac, run under Rosetta | all checks pass |
-| Windows x64 | Windows 11, MSVC | all checks pass |
-| Windows arm64 | not tested (no machine; CI runs it once a release exists) | |
+All checks pass on all 8 platforms, natively, in this pull request's CI
+against the 0.8.0-dev.1 release (Linux glibc builds in AlmaLinux 8, glibc
+2.28; musl builds in Alpine 3.22). Before that release existed, the same
+checks ran locally against the 0.8.0-dev.0 archives:
 
-"All checks" is `scripts/ci.py`: the potluckdb crate's tests, the rusqlite
+| Platform | Locally |
+| --- | --- |
+| Linux x64 glibc | Ubuntu 24.04 (WSL), and AlmaLinux 8 in Docker |
+| Linux x64 musl | Alpine 3.22 in Docker, and cross-built from glibc |
+| Linux arm64 glibc, musl | cross-built from x64, quickstarts run under QEMU |
+| macOS arm64 | Apple silicon Mac |
+| macOS x64 | cross-built on the Apple silicon Mac, run under Rosetta |
+| Windows x64 | Windows 11, MSVC |
+
+The checks are `scripts/ci.py`: the potluckdb crate's tests, the rusqlite
 and sqlx quickstarts, the binary check (exactly one SQLite in the program,
 PotluckDB's, and no shared SQLite loaded), rusqlite 0.40.2's own test suite
-with `bundled-full` (334 passed, 3 ignored, 0 failed), the build error
-without the patch, and the download path (served locally) including a
-changed archive being refused. rusqlite's suite also passes with
-`modern-full`, with default features, and with `session` and
-`preupdate_hook` (bindgen run on PotluckDB's header).
+with `bundled-full` (334 passed, 3 ignored, 0 failed; 333 on Windows, where
+one test doesn't apply), the build error without the patch, and the download
+path (from a local stand-in for the release) including a changed archive
+being refused. rusqlite's suite also passes with `modern-full`, with default
+features, and with `session` and `preupdate_hook` (bindgen run on
+PotluckDB's header). The real download from the 0.8.0-dev.1 GitHub release
+was checked by hand, with and without recorded SHA-256s.
 
 ## For the core team
 
