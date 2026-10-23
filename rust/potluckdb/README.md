@@ -11,10 +11,10 @@ which build is running.
 ```toml
 [dependencies]
 rusqlite = { version = "0.40", features = ["bundled"] }
-potluckdb = "=0.8.0-dev.1"
+potluckdb = "=0.8.0-dev.2"
 
 [patch.crates-io]
-libsqlite3-sys = { git = "https://github.com/potluckdb/potluckdb", tag = "rust-v0.8.0-dev.1", version = "0.38" }
+libsqlite3-sys = { git = "https://github.com/potluckdb/potluckdb", tag = "rust-v0.8.0-dev.2", version = "0.38" }
 ```
 
 Use `version = "0.37"` with sqlx 0.9 or rusqlite 0.39.

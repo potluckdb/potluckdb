@@ -16,10 +16,10 @@ the `Cargo.toml` at the root of your workspace:
 ```toml
 [dependencies]
 rusqlite = { version = "0.40", features = ["bundled"] }  # as before; `bundled` can stay on
-potluckdb = "=0.8.0-dev.1"  # optional: fails the build if the entry below is missing
+potluckdb = "=0.8.0-dev.2"  # optional: fails the build if the entry below is missing
 
 [patch.crates-io]
-libsqlite3-sys = { git = "https://github.com/potluckdb/potluckdb", tag = "rust-v0.8.0-dev.1", version = "0.38" }
+libsqlite3-sys = { git = "https://github.com/potluckdb/potluckdb", tag = "rust-v0.8.0-dev.2", version = "0.38" }
 ```
 
 ```rust
@@ -52,10 +52,10 @@ that into a build error that says what to change.
 ```toml
 [dependencies]
 sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite"] }
-potluckdb = "=0.8.0-dev.1"
+potluckdb = "=0.8.0-dev.2"
 
 [patch.crates-io]
-libsqlite3-sys = { git = "https://github.com/potluckdb/potluckdb", tag = "rust-v0.8.0-dev.1", version = "0.37" }
+libsqlite3-sys = { git = "https://github.com/potluckdb/potluckdb", tag = "rust-v0.8.0-dev.2", version = "0.37" }
 ```
 
 ```rust
@@ -79,7 +79,7 @@ Optional, and for now small:
 - The build fails unless `libsqlite3-sys` is PotluckDB's, for the same
   version as the crate.
 
-Write pre-release versions with `=` (`potluckdb = "=0.8.0-dev.1"`): Cargo
+Write pre-release versions with `=` (`potluckdb = "=0.8.0-dev.2"`): Cargo
 otherwise updates to a newer pre-release, which then no longer matches the
 `tag`.
 

@@ -1,7 +1,7 @@
 [package]
 name = "potluckdb"
 # The PotluckDB version; rust/scripts/set_version.py sets it for each release.
-version = "0.8.0-dev.0"
+version = "0.8.0-dev.2"
 edition = "2021"
 description = "PotluckDB for Rust: makes sure your app runs on PotluckDB's build of SQLite (which comes with the PotluckDB binary licence), and says which build it is. Sync comes in later releases."
 license = "Apache-2.0"
