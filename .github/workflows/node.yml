@@ -1,0 +1,251 @@
+# The Node.js package (node/): builds the addon against a PotluckDB release,
+# tests it, and (when asked) publishes the npm packages.
+#
+# - Changes under node/: build and test Linux x64 only.
+# - Nightly, by hand, or called from another workflow: all 8 platforms.
+# - publish: also publish potluckdb and @potluckdb/<platform> to npm with
+#   trusted publishing (OIDC, no token); pre-releases get the "next" tag.
+#
+# The addon is built against a release's core archives, so nothing is built
+# before the first release exists; the run then passes with a notice.
+name: node
+
+on:
+  pull_request:
+    paths: ["node/**", ".github/workflows/node.yml"]
+  push:
+    branches: [main]
+    paths: ["node/**", ".github/workflows/node.yml"]
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "PotluckDB version, e.g. 0.8.0-dev.1 (default: the latest release)"
+        required: false
+      publish:
+        description: "Publish the npm packages for this version"
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      version:
+        description: "PotluckDB version, e.g. 0.8.0-dev.1"
+        type: string
+        required: true
+      publish:
+        description: "Publish the npm packages for this version"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: node-${{ github.ref }}-${{ inputs.version }}-${{ inputs.publish }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - name: Find the PotluckDB release to build against
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          PUBLISH: ${{ inputs.publish }}
+        run: |
+          if [ -z "$VERSION" ]; then
+            VERSION=$(gh release list -R "$GITHUB_REPOSITORY" --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName // ""')
+            VERSION=${VERSION#v}
+          fi
+          if [ -n "$VERSION" ] && gh release view "v$VERSION" -R "$GITHUB_REPOSITORY" --json tagName > /dev/null 2>&1; then
+            echo "Building against PotluckDB $VERSION"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          elif [ "$PUBLISH" = true ]; then
+            echo "::error::potluckdb/potluckdb has no release v$VERSION, so there is nothing to publish."
+            exit 1
+          else
+            echo "::notice title=Node package not built::potluckdb/potluckdb has no release${VERSION:+ v$VERSION} yet, so there is no PotluckDB library to build the Node package against. Its build and tests are skipped and run once the first release (0.8.0-dev.1) is out."
+          fi
+      - name: Choose the platforms
+        id: matrix
+        if: steps.release.outputs.version
+        env:
+          ALL: ${{ github.event_name != 'pull_request' && github.event_name != 'push' }}
+          # glibc builds run in manylinux_2_28 (the oldest glibc they support),
+          # musl builds in Alpine; the images are those the core uses.
+          PLATFORMS: >-
+            [
+              {"target": "linux-x64-gnu", "os": "ubuntu-24.04", "container": "manylinux",
+               "image": "quay.io/pypa/manylinux_2_28_x86_64@sha256:076b19ef6e698f28649fa817c49d14443201e01da85240e8e52f93e8daa49bff"},
+              {"target": "linux-arm64-gnu", "os": "ubuntu-24.04-arm", "container": "manylinux",
+               "image": "quay.io/pypa/manylinux_2_28_aarch64@sha256:270a5e59af09f02dfc07fe4bb2cb2c5625c76d085cfa47f87dd93d9026eacc75"},
+              {"target": "linux-x64-musl", "os": "ubuntu-24.04", "container": "alpine",
+               "image": "node:24-alpine3.22@sha256:191c9f0080fcbbc6547a85dc0ff7988072214a355aabdc1d2ec55a7dae5eea8a"},
+              {"target": "linux-arm64-musl", "os": "ubuntu-24.04-arm", "container": "alpine",
+               "image": "node:24-alpine3.22@sha256:191c9f0080fcbbc6547a85dc0ff7988072214a355aabdc1d2ec55a7dae5eea8a"},
+              {"target": "macos-arm64", "os": "macos-15"},
+              {"target": "macos-x64", "os": "macos-15-intel"},
+              {"target": "windows-x64", "os": "windows-2025"},
+              {"target": "windows-arm64", "os": "windows-11-arm"}
+            ]
+        run: |
+          if [ "$ALL" = true ]; then
+            echo "matrix=$(jq -c . <<< "$PLATFORMS")" >> "$GITHUB_OUTPUT"
+          else
+            echo "matrix=$(jq -c '[.[] | select(.target == "linux-x64-gnu")]' <<< "$PLATFORMS")" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Type-checks the TypeScript declarations; needs no PotluckDB release.
+  types:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: node
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - run: npm ci --no-audit --no-fund
+      - run: node --test --test-reporter=spec test/types.test.js
+
+  build:
+    needs: plan
+    if: needs.plan.outputs.version
+    name: build ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix || '[]') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: node
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Download the PotluckDB library for ${{ matrix.target }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "v$VERSION" -R "$GITHUB_REPOSITORY" -D ../core \
+            -p "potluckdb-sqlite-$VERSION-${{ matrix.target }}.*" -p SHA256SUMS
+          ls -l ../core
+      - name: Build, check, test, package (glibc 2.28, in manylinux)
+        if: matrix.container == 'manylinux'
+        run: |
+          # The official Node.js binaries run on glibc 2.28, so the container
+          # uses the one setup-node installed.
+          docker run --rm -e VERSION -e POTLUCKDB_CORE_DIR=/src/core -e CI -e HOME=/tmp \
+            -u "$(id -u):$(id -g)" -v "$GITHUB_WORKSPACE:/src" -w /src/node \
+            -v "$(dirname "$(dirname "$(command -v node)")"):/opt/node:ro" \
+            "${{ matrix.image }}" \
+            bash -euc 'export PATH=/opt/node/bin:/opt/python/cp312-cp312/bin:$PATH; sh scripts/ci.sh'
+      - name: Build, check, test, package (musl, in Alpine)
+        if: matrix.container == 'alpine'
+        run: |
+          docker run --rm -e VERSION -e POTLUCKDB_CORE_DIR=/src/core -e CI \
+            -v "$GITHUB_WORKSPACE:/src" -w /src/node "${{ matrix.image }}" \
+            sh -euc 'apk add --no-cache python3 make g++ binutils > /dev/null; sh scripts/ci.sh'
+      - name: Build, check, test, package
+        if: ${{ !matrix.container }}
+        env:
+          POTLUCKDB_CORE_DIR: ${{ github.workspace }}/core
+        run: sh scripts/ci.sh
+      - name: Run the quickstart on the oldest glibc (AlmaLinux 8, glibc 2.28)
+        if: matrix.container == 'manylinux'
+        run: |
+          docker run --rm -e HOME=/tmp -u "$(id -u):$(id -g)" -v "$GITHUB_WORKSPACE:/src" -w /src/node \
+            -v "$(dirname "$(dirname "$(command -v node)")"):/opt/node:ro" \
+            almalinux:8@sha256:8b469a3a78515e8a18ea8fc727e6a3679e1d0c5ba6f58d5b30be3d0d9b86cffe \
+            bash -euc 'export PATH=/opt/node/bin:$PATH; node test/quickstart/run.js dist'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: node-${{ matrix.target }}
+          path: node/prebuilds/${{ matrix.target }}/
+          if-no-files-found: error
+
+  # The README quickstart on each supported Node.js version, from the packed
+  # packages installed with npm.
+  quickstart:
+    needs: [plan, build]
+    name: quickstart (Node.js ${{ matrix.node }})
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22, 24]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    defaults:
+      run:
+        working-directory: node
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: node-linux-x64-gnu
+          path: node/prebuilds/linux-x64-gnu
+      - run: node scripts/package.js --version "$VERSION" --pack --out dist
+      - run: node test/quickstart/run.js dist
+
+  publish:
+    needs: [plan, build, quickstart]
+    if: inputs.publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write # npm trusted publishing and provenance
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    defaults:
+      run:
+        working-directory: node
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: node-*
+          path: node/artifacts
+      - name: Make the packages
+        run: |
+          mkdir prebuilds
+          for dir in artifacts/node-*; do mv "$dir" "prebuilds/${dir#artifacts/node-}"; done
+          node scripts/package.js --version "$VERSION" --all --out dist
+      - name: Publish to npm
+        run: |
+          npm --version # trusted publishing needs npm 11.5.1 or later
+          case "$VERSION" in *-*) tag=next ;; *) tag=latest ;; esac
+          # The platform packages first, so potluckdb never points at missing ones.
+          for dir in $(ls -d dist/*/ | grep -v '^dist/potluckdb/$') dist/potluckdb/; do
+            name=$(node -p "require('./$dir/package.json').name")
+            if npm view "$name@$VERSION" version > /dev/null 2>&1; then
+              echo "$name@$VERSION is already on npm"
+            else
+              npm publish "./$dir" --provenance --access public --tag "$tag"
+            fi
+          done
