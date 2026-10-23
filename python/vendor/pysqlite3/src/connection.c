@@ -788,13 +788,16 @@ error:
 static void
 set_sqlite_error(sqlite3_context *context, const char *message)
 {
+#if PYSQLITE_PY311
     if (PyErr_ExceptionMatches(PyExc_MemoryError)) {
         sqlite3_result_error_nomem(context);
     }
     else if (PyErr_ExceptionMatches(PyExc_OverflowError)) {
         sqlite3_result_error_toobig(context);
     }
-    else {
+    else
+#endif
+    {
         sqlite3_result_error(context, message, -1);
     }
     print_or_clear_traceback((pysqlite_callback_context *)sqlite3_user_data(context));
@@ -850,7 +853,10 @@ step_callback(sqlite3_context *context, int argc, sqlite3_value **params)
 
     step = PyObject_GetAttr(*instance, pysqlite_get_state()->str_step);
     if (step == NULL) {
+#if PYSQLITE_PY311
         set_sqlite_error(context, "user-defined aggregate's 'step' method not defined");
+#endif
+        /* Python 3.10 leaves the AttributeError for execute() to raise. */
         goto exit;
     }
     PyObject *args = build_py_params(context, argc, params);
@@ -895,7 +901,11 @@ final_callback(sqlite3_context *context)
         Py_DECREF(result);
     }
     if (!ok) {
+#if PYSQLITE_PY311
         int attr_err = PyErr_ExceptionMatches(PyExc_AttributeError);
+#else
+        int attr_err = 0;
+#endif
         pysqlite_chain_exceptions(exc);
         /* SQLite does not report errors from the final callback to
          * sqlite3_step(), so execute() does not raise for them. */
@@ -978,6 +988,10 @@ value_callback(sqlite3_context *context)
 static int
 check_num_params(pysqlite_Connection *self, int n, const char *name)
 {
+#if !PYSQLITE_PY314
+    /* Before Python 3.14, SQLite rejects it ("Error creating function"). */
+    return 0;
+#endif
     int limit = sqlite3_limit(self->db, SQLITE_LIMIT_FUNCTION_ARG, -1);
     if (n < -1 || n > limit) {
         PyErr_Format(self->ProgrammingError, "'%s' must be between -1 and %d, not %d",
@@ -1067,7 +1081,11 @@ connection_create_window_function(pysqlite_Connection *self, PyObject *args)
     }
     if (rc != SQLITE_OK) {
         /* The error is not set on the connection; use the result code. */
+#if PYSQLITE_PY314
         pysqlite_set_error_from_code(rc);
+#else
+        PyErr_SetString(self->ProgrammingError, sqlite3_errstr(rc));
+#endif
         return NULL;
     }
     Py_RETURN_NONE;
@@ -1605,15 +1623,8 @@ exit:
 }
 
 static PyObject *
-connection_create_collation(pysqlite_Connection *self, PyObject *args)
+register_collation(pysqlite_Connection *self, const char *name, PyObject *callable)
 {
-    const char *name;
-    PyObject *callable;
-    if (!PyArg_ParseTuple(args, "sO:create_collation", &name, &callable)) {
-        return NULL;
-    }
-    CHECK_THREAD_AND_CONNECTION(self, NULL);
-
     pysqlite_callback_context *ctx = NULL;
     int rc;
     if (callable == Py_None) {
@@ -1640,6 +1651,47 @@ connection_create_collation(pysqlite_Connection *self, PyObject *args)
         return NULL;
     }
     Py_RETURN_NONE;
+}
+
+static PyObject *
+connection_create_collation(pysqlite_Connection *self, PyObject *args)
+{
+    PyObject *callable;
+#if PYSQLITE_PY311
+    const char *name;
+    if (!PyArg_ParseTuple(args, "sO:create_collation", &name, &callable)) {
+        return NULL;
+    }
+    CHECK_THREAD_AND_CONNECTION(self, NULL);
+    return register_collation(self, name, callable);
+#else
+    /* Python 3.10: the name is upper-cased (with str.upper, whatever its
+     * type) and may only hold ASCII letters, digits and underscores. */
+    PyObject *name_obj;
+    if (!PyArg_ParseTuple(args, "UO:create_collation", &name_obj, &callable)) {
+        return NULL;
+    }
+    CHECK_THREAD_AND_CONNECTION(self, NULL);
+    PyObject *upper = PyObject_CallMethod((PyObject *)&PyUnicode_Type, "upper", "O", name_obj);
+    if (upper == NULL) {
+        return NULL;
+    }
+    PyObject *result = NULL;
+    for (Py_ssize_t i = 0; i < PyUnicode_GET_LENGTH(upper); i++) {
+        Py_UCS4 ch = PyUnicode_READ_CHAR(upper, i);
+        if (!((ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'Z') || ch == '_')) {
+            PyErr_SetString(self->ProgrammingError, "invalid character in collation name");
+            goto done;
+        }
+    }
+    const char *name = PyUnicode_AsUTF8(upper);
+    if (name != NULL) {
+        result = register_collation(self, name, callable);
+    }
+done:
+    Py_DECREF(upper);
+    return result;
+#endif
 }
 
 /* ---------------------------------------------------------------------- */

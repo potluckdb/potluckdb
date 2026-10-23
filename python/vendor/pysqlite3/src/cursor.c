@@ -744,6 +744,13 @@ pysqlite_query_execute(pysqlite_Cursor *self, int multiple, PyObject *sql, PyObj
             pysqlite_set_error_from_db(self->connection->db);
             goto error;
         }
+#if !PYSQLITE_PY311
+        /* Python 3.10 raises an exception a callback left behind (such as
+         * the AttributeError of an aggregate without step()). */
+        if (PyErr_Occurred()) {
+            goto error;
+        }
+#endif
 
         if (build_row_cast_map(self) != 0) {
             PyObject *exc = pysqlite_get_raised();

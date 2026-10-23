@@ -100,7 +100,11 @@ pysqlite_statement_create(pysqlite_Connection *connection, PyObject *sql)
         return NULL;
     }
     if (strlen(sql_cstr) != (size_t)size) {
+#if PYSQLITE_PY311
         PyErr_SetString(connection->ProgrammingError, "the query contains a null character");
+#else
+        PyErr_SetString(PyExc_ValueError, "the query contains a null character");
+#endif
         return NULL;
     }
 
@@ -116,8 +120,12 @@ pysqlite_statement_create(pysqlite_Connection *connection, PyObject *sql)
     }
 
     if (lstrip_sql(tail) != NULL) {
+#if PYSQLITE_PY311
         PyErr_SetString(connection->ProgrammingError,
                         "You can only execute one statement at a time.");
+#else
+        PyErr_SetString(connection->Warning, "You can only execute one statement at a time.");
+#endif
         goto error;
     }
 
