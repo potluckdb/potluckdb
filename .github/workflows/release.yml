@@ -108,7 +108,11 @@ jobs:
           python3 tools/release_notes.py --version "$VERSION" --notes-out ../notes.md
           git add -A CHANGELOG.md changes
           git commit -m "Release notes for $VERSION"
-          git push origin HEAD:main
+          # main may have moved while the tests ran: put the notes on top.
+          for attempt in 1 2 3; do
+            git push origin HEAD:main && break
+            git pull --rebase origin main
+          done
           kind=$([[ "$VERSION" == *-* ]] && echo --prerelease || echo --latest)
           gh release edit "v$VERSION" --draft=false $kind --tag "v$VERSION" \
             --target "$(git rev-parse HEAD)" --title "PotluckDB $VERSION" --notes-file ../notes.md
