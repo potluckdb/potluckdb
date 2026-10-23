@@ -21,3 +21,19 @@ jobs:
       - run: python3 -m unittest discover -s tests -v
       - name: Change notes are valid
         run: python3 tools/release_notes.py --version 0.0.0-check --check
+
+  docs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: docs
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build

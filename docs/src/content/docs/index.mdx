@@ -1,0 +1,38 @@
+---
+title: PotluckDB
+description: Local-first SQLite and DuckDB, synced through a storage bucket you own. No server.
+template: splash
+hero:
+  tagline: Local-first SQLite and DuckDB, synced through a storage bucket you own. No server.
+  actions:
+    - text: Quickstart
+      link: /start/quickstart/
+      icon: right-arrow
+    - text: Releases
+      link: https://github.com/potluckdb/potluckdb/releases
+      icon: external
+      variant: minimal
+---
+
+import { Aside, Card, CardGrid } from '@astrojs/starlight/components';
+
+<Aside type="caution" title="Pre-release">
+The 0.8 series is built in the open, with a new pre-release every few hours.
+Early pre-releases do not sync yet: see [what works today](/start/status/).
+Not for production use before 1.0.
+</Aside>
+
+<CardGrid>
+  <Card title="Drop-in" icon="puzzle">
+    PotluckDB replaces the standard SQLite library. Your code, drivers and
+    ORMs keep working.
+  </Card>
+  <Card title="Local and fast" icon="rocket">
+    Reads and writes stay on the device. Changes reach your other devices in
+    about half a second.
+  </Card>
+  <Card title="Your bucket" icon="seti:db">
+    Sync goes through S3, Cloudflare R2, Google Cloud Storage, Azure Blob or
+    a folder. There is no PotluckDB server.
+  </Card>
+</CardGrid>

@@ -35,6 +35,7 @@ Each release lists how to check its files (`SHA256SUMS` and Sigstore signatures)
 | `CHANGELOG.md` | Release notes for every version |
 | `changes/` | Notes for changes not released yet |
 | `tools/` | Release tooling |
+| `docs/` | The docs site, docs.potluckdb.com ([Starlight](https://starlight.astro.build/)) |
 
 Language add-ons, docs and examples arrive here during the 0.8 series. The
 sync engine itself is built in a private repository; its binaries are
