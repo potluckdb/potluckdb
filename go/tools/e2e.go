@@ -30,8 +30,6 @@ import (
 	"time"
 )
 
-const mattnVersion = "v1.14.52"
-
 type e2e struct {
 	version string
 	sqlite  string

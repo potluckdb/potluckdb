@@ -264,13 +264,17 @@ What publishing needs, to set up once:
   repository, and needs no user account);
 - the repository variable `GO_PUBLISHING=true` in `potluckdb/potluckdb`.
 
+In CI, against the release 0.8.0-dev.1 on GitHub's runners, `go.yml`
+passes on all six platforms that have a module (Linux in AlmaLinux 8 and
+Alpine, on x64 and arm64; macOS on Apple silicon and Intel), with the same
+test results as above, and skips both Windows platforms with a notice:
+0.8.0-dev.1's Windows archives, too, have only the MSVC library.
+
 ## Not verified yet
 
-- Anything in CI against a real release: none exists yet, so `go.yml`'s
-  test, dist and publish jobs have not run. Their test commands are the ones
-  run by hand above (on Windows with Go and llvm-mingw set up as the job
-  sets them up); the job steps around them, and the publish job, have not
-  run anywhere.
+- The `publish` job, and the Windows CI steps after the skip (installing
+  llvm-mingw on the runners): they have not run in CI. The same Windows
+  setup was run by hand on Windows 11 x64.
 - Windows with the archives as they are: no Go module until the core build
   adds a MinGW library. windows/arm64 has been linked but not run.
 - `go get` through the real proxy.golang.org and sum.golang.org, and pushing
