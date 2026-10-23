@@ -46,7 +46,8 @@ async function main() {
 	process.chdir(STANDIN);
 	const args = process.argv.slice(2);
 	const grep = args[0] === '--grep' ? args[1] : undefined;
-	const mocha = new Mocha({ timeout: 5000, slow: 75, reporter: 'dot', grep });
+	// This script reports the results itself (below), so mocha prints nothing.
+	const mocha = new Mocha({ timeout: 5000, slow: 75, reporter: function Silent() {}, grep });
 	const dir = path.join(STANDIN, 'test');
 	for (const file of fs.readdirSync(dir).filter(f => f.endsWith('.js')).sort()) mocha.addFile(path.join(dir, file));
 
@@ -55,22 +56,20 @@ async function main() {
 	let passed = 0;
 	let pending = 0;
 	const runner = mocha.run(() => {
-		const total = runner.total;
+		const ran = runner.total - pending;
 		const unexpected = [...failed].filter(([title]) => !known.has(title));
 		const fixed = grep ? [] : [...known.keys()].filter(title => !failed.has(title));
-		const ran = total - pending;
-		console.log(`\nbetter-sqlite3 ${KNOWN['better-sqlite3']} test suite on potluckdb (${process.platform}-${process.arch}, Node.js ${process.version}):`);
+		console.log(`better-sqlite3 ${KNOWN['better-sqlite3']} test suite on potluckdb (${process.platform}-${process.arch}, Node.js ${process.version}):`);
 		console.log(`  ${passed} of ${ran} tests pass (${(100 * passed / ran).toFixed(1)}%); ${pending} skipped by the suite on this platform`);
-		console.log(`  ${failed.size} failures (tests and hooks), ${failed.size - unexpected.length} of them known`);
-		for (const [title, message] of unexpected) console.log(`\nNEW FAILURE: ${title}\n  ${message}`);
+		console.log(`  ${failed.size} failures (tests and hooks), ${failed.size - unexpected.length} of them known (see test/known-failures.json):`);
+		for (const title of failed.keys()) if (known.has(title)) console.log(`    known: ${title}`);
+		for (const [title, err] of unexpected) console.log(`\nNEW FAILURE: ${title}\n${err && err.stack || err}`);
 		for (const title of fixed) console.log(`\nNOW PASSES (remove it from known-failures.json): ${title}`);
 		process.exit(unexpected.length || fixed.length ? 1 : 0);
 	});
 	runner.on('pass', () => { passed += 1; });
 	runner.on('pending', () => { pending += 1; });
-	runner.on('fail', (test, err) => {
-		failed.set(test.fullTitle(), String(err && err.message).split('\n')[0]);
-	});
+	runner.on('fail', (test, err) => { failed.set(test.fullTitle(), err); });
 }
 
 main().catch((err) => {

@@ -3,9 +3,10 @@
 //   dist/potluckdb/   the main package, with an optional dependency on each platform package
 //   dist/<target>/    @potluckdb/<target>, holding potluckdb.node for one platform
 //
-// Usage: node scripts/package.js [--version <version>] [--prebuilds <dir>] [--out <dir>] [--pack]
+// Usage: node scripts/package.js [--version <version>] [--prebuilds <dir>] [--out <dir>] [--pack] [--all]
 // --version defaults to package.json's; each build must come from the core of
-// that version. --pack also runs npm pack in each package folder.
+// that version. --pack also runs npm pack in each package folder; --all fails
+// unless there is a build for every platform (for publishing).
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
@@ -20,12 +21,14 @@ function parseArgs(argv) {
 		prebuilds: path.join(ROOT, 'prebuilds'),
 		out: path.join(ROOT, 'dist'),
 		pack: false,
+		all: false,
 	};
 	for (let i = 0; i < argv.length; ++i) {
 		if (argv[i] === '--version') args.version = argv[++i];
 		else if (argv[i] === '--prebuilds') args.prebuilds = path.resolve(argv[++i]);
 		else if (argv[i] === '--out') args.out = path.resolve(argv[++i]);
 		else if (argv[i] === '--pack') args.pack = true;
+		else if (argv[i] === '--all') args.all = true;
 		else throw new Error(`unknown argument ${argv[i]}`);
 	}
 	if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(args.version)) throw new Error(`not a version: ${args.version}`);
@@ -83,9 +86,10 @@ ${mit}
 `);
 	fs.writeFileSync(path.join(dir, 'README.md'), `# @potluckdb/${target}
 
-PotluckDB's native library for ${label}, ${t.minimum} or later. Don't install
-it yourself: \`npm install potluckdb\` installs the package for your platform.
-See https://github.com/potluckdb/potluckdb/tree/main/node.
+PotluckDB's native library for ${label}; it runs on ${t.runsOn}.
+
+Don't install it yourself: \`npm install potluckdb\` installs the package for
+your platform. See https://github.com/potluckdb/potluckdb/tree/main/node.
 `);
 	writeJson(path.join(dir, 'package.json'), {
 		name: `@potluckdb/${target}`,
@@ -107,11 +111,13 @@ See https://github.com/potluckdb/potluckdb/tree/main/node.
 }
 
 function main() {
-	const { version, prebuilds, out, pack } = parseArgs(process.argv.slice(2));
+	const { version, prebuilds, out, pack, all } = parseArgs(process.argv.slice(2));
 	fs.rmSync(out, { recursive: true, force: true });
 	const dirs = [];
 	const targets = fs.existsSync(prebuilds) ? fs.readdirSync(prebuilds).filter(t => TARGETS[t]) : [];
 	if (!targets.length) throw new Error(`no builds in ${prebuilds}: run scripts/build.js first`);
+	const missing = Object.keys(TARGETS).filter(t => !targets.includes(t));
+	if (all && missing.length) throw new Error(`no builds in ${prebuilds} for ${missing.join(', ')}`);
 	for (const target of targets.sort()) dirs.push(platformPackage(version, target, path.join(prebuilds, target), out));
 	dirs.push(mainPackage(version, out));
 	for (const dir of dirs) {
