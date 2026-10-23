@@ -30,13 +30,15 @@ def core_or_exit():
         sys.exit(f"\npotluckdb: cannot build without the PotluckDB core library.\n{error}\n")
 
 
-def check_licences(core):
+def sync_licences(core):
+    """The wheel ships the core archive's licence and notices: copy them over
+    ours when the core's changed (before the wheel collects license files)."""
     for key, name in LICENSE_COPIES.items():
-        ours = (HERE / "licenses" / name).read_bytes().replace(b"\r\n", b"\n")
+        ours = HERE / "licenses" / name
         theirs = core[key].read_bytes().replace(b"\r\n", b"\n")
-        if ours != theirs:
-            sys.exit(f"\npotluckdb: licenses/{name} differs from {core[key].name} in the core archive "
-                     f"{core['root'].name}; copy the archive's text into licenses/{name}.\n")
+        if ours.read_bytes().replace(b"\r\n", b"\n") != theirs:
+            ours.write_bytes(theirs)
+            print(f"potluckdb: licenses/{name} updated from {core['root'].name}")
 
 
 class BuildExt(build_ext):
@@ -44,7 +46,7 @@ class BuildExt(build_ext):
 
     def build_extensions(self):
         core = core_or_exit()
-        check_licences(core)
+        sync_licences(core)
         print(f"potluckdb: linking PotluckDB {core['potluckdb_version']} "
               f"(SQLite {core['sqlite_version']}, {core['target']}) from {core['root']}")
         windows = core["target"].startswith("windows-")

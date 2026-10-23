@@ -56,8 +56,8 @@ environment-pass = [
     "POTLUCKDB_EXPECT_SQLITE_VERSION",
 ]
 test-command = [
-    "python {project}/tests/test_package.py",
-    "python {project}/tests/run_cpython_tests.py",
+    "python {package}/tests/test_package.py",
+    "python {package}/tests/run_cpython_tests.py",
 ]
 
 [tool.cibuildwheel.linux]
