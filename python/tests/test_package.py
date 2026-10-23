@@ -152,6 +152,105 @@ class IsolationTests(unittest.TestCase):
         self.assertEqual(our_version, potluckdb.sqlite_version)
 
 
+class RobustnessTests(unittest.TestCase):
+    """Callbacks that pull the rug out from under a running statement must
+    raise, not crash (the standard module crashes in several of these).
+    Each case runs in its own interpreter, so a crash fails only that test."""
+
+    SETUP = """
+        import potluckdb as sqlite3
+        con = sqlite3.connect(":memory:")
+        con.execute("create table t(x)")
+        con.executemany("insert into t values (?)", [(i,) for i in range(5)])
+        def outcome(fn):
+            try:
+                result = fn()
+            except Exception as e:
+                print(type(e).__name__, e)
+            else:
+                print("ok", result)
+    """
+
+    def run_case(self, code):
+        return run_python(textwrap.dedent(self.SETUP) + textwrap.dedent(code)).strip()
+
+    def test_text_factory_replaced_while_reading_a_row(self):
+        out = self.run_case("""
+            def factory(b):
+                con.text_factory = str  # frees this factory while the row is read
+                return b.decode() + "!"
+            con.text_factory = factory
+            outcome(lambda: con.execute("select 'a', 'b', 'c'").fetchone())
+        """)
+        self.assertEqual(out, "ok ('a!', 'b!', 'c!')")
+
+    def test_function_uses_the_cursor_it_runs_in(self):
+        out = self.run_case("""
+            cur = con.cursor()
+            def f(x):
+                if x == 4:
+                    cur.execute("select 1")
+                return 1
+            con.create_function("f", 1, f)
+            cur.execute("select x from t where f(x)")
+            outcome(cur.fetchall)
+        """)
+        self.assertRegex(out, "^OperationalError user-defined function raised exception")
+
+    def test_function_closes_the_connection(self):
+        out = self.run_case("""
+            def f():
+                con.close()
+                return 1
+            con.create_function("f", 0, f)
+            outcome(lambda: con.execute("insert into t values (f())"))
+        """)
+        self.assertEqual(out, "ProgrammingError Cannot operate on a closed database.")
+
+    def test_function_closes_the_connection_while_fetching(self):
+        out = self.run_case("""
+            def f(x):
+                if x == 2:
+                    con.close()
+                return x
+            con.create_function("f", 1, f)
+            cur = con.execute("select f(x) from t")
+            outcome(cur.fetchall)
+        """)
+        self.assertEqual(out, "ProgrammingError Cannot operate on a closed database.")
+
+    def test_function_closes_the_connection_in_a_script(self):
+        out = self.run_case("""
+            def f():
+                con.close()
+                return 1
+            con.create_function("f", 0, f)
+            outcome(lambda: con.executescript("select f(); select 2; select 3;"))
+        """)
+        self.assertEqual(out, "ProgrammingError Cannot operate on a closed database.")
+
+    def test_window_function_with_an_empty_frame(self):
+        out = self.run_case("""
+            class W:
+                def __init__(self): self.v = 0
+                def step(self, x): self.v += x
+                def inverse(self, x): self.v -= x
+                def value(self): return self.v
+                def finalize(self): return self.v
+            con.create_window_function("w", 1, W)
+            outcome(lambda: con.execute(
+                "select x, w(x) over (order by x rows between 2 preceding and 1 preceding) from t").fetchall())
+        """)
+        self.assertEqual(out, "ok [(0, 0), (1, 0), (2, 1), (3, 3), (4, 5)]")
+
+    def test_deserialize_into_temp(self):
+        out = self.run_case("""
+            data = sqlite3.connect(":memory:").serialize()
+            outcome(lambda: con.deserialize(data, name="temp"))
+        """)
+        self.assertRegex(out, r"^(OperationalError|DatabaseError) ")
+
+
 class SymbolTests(unittest.TestCase):
     """The extension exports only its init function, never SQLite's API."""
 

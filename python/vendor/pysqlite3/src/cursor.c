@@ -273,8 +273,13 @@ fetch_one_row(pysqlite_Cursor *self)
     if (row == NULL) {
         return NULL;
     }
-    sqlite3 *db = self->connection->db;
+    /* The statement's database: still valid if a converter closes the
+     * connection (it stays open until the statement is finalized). */
+    sqlite3 *db = sqlite3_db_handle(st);
+    /* A converter or the text factory may replace the connection's text
+     * factory; keep the one this row started with alive. */
     PyObject *text_factory = self->connection->text_factory;
+    Py_XINCREF(text_factory);
     for (int i = 0; i < numcols; i++) {
         PyObject *converter = Py_None;
         if (self->connection->detect_types && self->row_cast_map != NULL
@@ -371,11 +376,26 @@ fetch_one_row(pysqlite_Cursor *self)
         }
         PyTuple_SET_ITEM(row, i, value);
     }
+    Py_XDECREF(text_factory);
     return row;
 
 error:
+    Py_XDECREF(text_factory);
     Py_DECREF(row);
     return NULL;
+}
+
+/* After a callback ran inside sqlite3_step(): 0 if the connection is still
+ * open, else -1 with ProgrammingError (a callback closed it). */
+static int
+check_still_open(pysqlite_Cursor *self)
+{
+    if (self->connection->db == NULL) {
+        PyErr_SetString(pysqlite_get_state()->ProgrammingError,
+                        "Cannot operate on a closed database.");
+        return -1;
+    }
+    return 0;
 }
 
 static int
@@ -731,6 +751,9 @@ pysqlite_query_execute(pysqlite_Cursor *self, int multiple, PyObject *sql, PyObj
         }
 
         int rc = stmt_step(self->statement->st);
+        if (check_still_open(self) < 0) {
+            goto error;
+        }
         if (rc != SQLITE_DONE && rc != SQLITE_ROW) {
             if (PyErr_Occurred()) {
                 /* An exception in a user-defined callback */
@@ -889,16 +912,30 @@ cursor_executescript(pysqlite_Cursor *self, PyObject *script_obj)
 
     while (1) {
         const char *tail;
-        Py_BEGIN_ALLOW_THREADS
         sqlite3_stmt *stmt;
+        Py_BEGIN_ALLOW_THREADS
         rc = sqlite3_prepare_v2(db, script, (int)len + 1, &stmt, &tail);
-        if (rc == SQLITE_OK) {
+        if (rc == SQLITE_OK && stmt != NULL) {
             do {
                 rc = sqlite3_step(stmt);
             } while (rc == SQLITE_ROW);
-            rc = sqlite3_finalize(stmt);
         }
         Py_END_ALLOW_THREADS
+        if (stmt != NULL && self->connection->db != db) {
+            /* A function in the script closed (or reopened) the connection:
+             * finalizing the statement closes the old database. */
+            Py_BEGIN_ALLOW_THREADS
+            (void)sqlite3_finalize(stmt);
+            Py_END_ALLOW_THREADS
+            PyErr_SetString(pysqlite_get_state()->ProgrammingError,
+                            "Cannot operate on a closed database.");
+            return NULL;
+        }
+        if (stmt != NULL) {
+            Py_BEGIN_ALLOW_THREADS
+            rc = sqlite3_finalize(stmt);
+            Py_END_ALLOW_THREADS
+        }
         if (rc != SQLITE_OK) {
             goto error;
         }
@@ -926,13 +963,22 @@ cursor_iternext(pysqlite_Cursor *self)
     }
     sqlite3_stmt *stmt = self->statement->st;
 
-    self->locked = 1;  /* the row's converters must not use this cursor */
+    /* Neither the row's converters nor functions run by the next step may
+     * use this cursor: they could reset or replace its statement. */
+    self->locked = 1;
     PyObject *row = fetch_one_row(self);
-    self->locked = 0;
     if (row == NULL) {
+        self->locked = 0;
         return NULL;
     }
     int rc = stmt_step(stmt);
+    self->locked = 0;
+    if (check_still_open(self) < 0) {
+        (void)stmt_reset(self->statement);
+        Py_CLEAR(self->statement);
+        Py_DECREF(row);
+        return NULL;
+    }
     if (rc == SQLITE_DONE) {
         if (self->statement->is_dml) {
             self->rowcount = (long)sqlite3_changes(self->connection->db);

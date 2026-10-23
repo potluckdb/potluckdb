@@ -981,6 +981,28 @@ exit:
     PyGILState_Release(gil);
 }
 
+/* The aggregate instance of a window function. SQLite may ask for value()
+ * before any step() (an empty frame), so the instance is created here too.
+ * NULL (with the error set on the statement) if that fails. */
+static PyObject **
+get_window_instance(sqlite3_context *context, pysqlite_callback_context *ctx)
+{
+    PyObject **instance = sqlite3_aggregate_context(context, sizeof(PyObject *));
+    if (instance == NULL) {
+        (void)PyErr_NoMemory();
+        set_sqlite_error(context, "unable to allocate SQLite aggregate context");
+        return NULL;
+    }
+    if (*instance == NULL) {
+        *instance = PyObject_CallNoArgs(ctx->callable);
+        if (*instance == NULL) {
+            set_sqlite_error(context, "user-defined aggregate's '__init__' method raised error");
+            return NULL;
+        }
+    }
+    return instance;
+}
+
 static void
 inverse_callback(sqlite3_context *context, int argc, sqlite3_value **params)
 {
@@ -988,8 +1010,12 @@ inverse_callback(sqlite3_context *context, int argc, sqlite3_value **params)
     pysqlite_callback_context *ctx = sqlite3_user_data(context);
     incref_callback_context(ctx);
 
-    PyObject **instance = sqlite3_aggregate_context(context, sizeof(PyObject *));
-    PyObject *method = PyObject_GetAttr(*instance, pysqlite_get_state()->str_inverse);
+    PyObject *method = NULL;
+    PyObject **instance = get_window_instance(context, ctx);
+    if (instance == NULL) {
+        goto exit;
+    }
+    method = PyObject_GetAttr(*instance, pysqlite_get_state()->str_inverse);
     if (method == NULL) {
         set_sqlite_error(context, "user-defined aggregate's 'inverse' method not defined");
         goto exit;
@@ -1022,21 +1048,23 @@ value_callback(sqlite3_context *context)
     pysqlite_callback_context *ctx = sqlite3_user_data(context);
     incref_callback_context(ctx);
 
-    PyObject **instance = sqlite3_aggregate_context(context, sizeof(PyObject *));
-    PyObject *result = PyObject_CallMethodNoArgs(*instance, pysqlite_get_state()->str_value);
-    if (result == NULL) {
-        int attr_err = PyErr_ExceptionMatches(PyExc_AttributeError);
-        set_sqlite_error(context, attr_err
-                         ? "user-defined aggregate's 'value' method not defined"
-                         : "user-defined aggregate's 'value' method raised error");
-    }
-    else {
-        int rc = set_result(context, result);
-        Py_DECREF(result);
-        if (rc < 0) {
-            set_sqlite_error(context,
-                             "unable to set result from user-defined aggregate's "
-                             "'value' method");
+    PyObject **instance = get_window_instance(context, ctx);
+    if (instance != NULL) {
+        PyObject *result = PyObject_CallMethodNoArgs(*instance, pysqlite_get_state()->str_value);
+        if (result == NULL) {
+            int attr_err = PyErr_ExceptionMatches(PyExc_AttributeError);
+            set_sqlite_error(context, attr_err
+                             ? "user-defined aggregate's 'value' method not defined"
+                             : "user-defined aggregate's 'value' method raised error");
+        }
+        else {
+            int rc = set_result(context, result);
+            Py_DECREF(result);
+            if (rc < 0) {
+                set_sqlite_error(context,
+                                 "unable to set result from user-defined aggregate's "
+                                 "'value' method");
+            }
         }
     }
 
@@ -1935,7 +1963,14 @@ connection_deserialize(pysqlite_Connection *self, PyObject *args, PyObject *kwar
     Py_END_ALLOW_THREADS
     PyBuffer_Release(&data);
     if (rc != SQLITE_OK) {
-        pysqlite_set_error_from_db(self->db);
+        /* Some failures (an unknown or temp schema) set no error on the
+         * connection; then the result code tells. */
+        if (sqlite3_errcode(self->db) != SQLITE_OK) {
+            pysqlite_set_error_from_db(self->db);
+        }
+        else {
+            pysqlite_set_error_from_code(rc);
+        }
         return NULL;
     }
     Py_RETURN_NONE;
