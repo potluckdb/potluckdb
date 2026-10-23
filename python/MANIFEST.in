@@ -1,0 +1,4 @@
+include CORE_VERSION core_archive.py LICENSE README.md
+recursive-include licenses *.txt
+recursive-include vendor/pysqlite3 *.c *.h LICENSE README.md
+recursive-include tests *.py *.txt

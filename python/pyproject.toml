@@ -1,0 +1,71 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "potluckdb"
+dynamic = ["version"]
+description = "Drop-in replacement for Python's sqlite3 module, running on PotluckDB's SQLite build"
+readme = "README.md"
+requires-python = ">=3.10"
+# Apache-2.0: this package's own code. Zlib: the vendored pysqlite3 sources.
+# blessing: SQLite's public-domain notice. LicenseRef-PotluckDB-Binary: the
+# bundled PotluckDB library (licenses/LICENSE-potluckdb-binary.txt).
+license = "Apache-2.0 AND Zlib AND blessing AND LicenseRef-PotluckDB-Binary"
+license-files = [
+    "LICENSE",
+    "vendor/pysqlite3/LICENSE",
+    "licenses/LICENSE-potluckdb-binary.txt",
+    "licenses/THIRD_PARTY_NOTICES.txt",
+]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: C",
+    "Topic :: Database",
+    "Topic :: Database :: Database Engines/Servers",
+]
+
+[project.urls]
+Homepage = "https://github.com/potluckdb/potluckdb"
+Source = "https://github.com/potluckdb/potluckdb/tree/main/python"
+Changelog = "https://github.com/potluckdb/potluckdb/blob/main/CHANGELOG.md"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+packages = ["potluckdb"]
+include-package-data = false
+
+# Wheels: CPython 3.10-3.14 on the platforms the PotluckDB library is built
+# for, with platform tags at the library's minimums. Every wheel is tested
+# with tests/test_package.py and CPython's own sqlite3 test suite.
+[tool.cibuildwheel]
+build = ["cp310-*", "cp311-*", "cp312-*", "cp313-*", "cp314-*"]
+skip = ["*_i686", "*-win32"]
+build-frontend = "build"
+manylinux-x86_64-image = "manylinux_2_28"
+manylinux-aarch64-image = "manylinux_2_28"
+musllinux-x86_64-image = "musllinux_1_2"
+musllinux-aarch64-image = "musllinux_1_2"
+environment-pass = [
+    "POTLUCKDB_CORE_DIR",
+    "POTLUCKDB_CORE_VERSION",
+    "POTLUCKDB_PACKAGE_VERSION",
+    "POTLUCKDB_EXPECT_CORE_VERSION",
+    "POTLUCKDB_EXPECT_SQLITE_VERSION",
+]
+test-command = [
+    "python {project}/tests/test_package.py",
+    "python {project}/tests/run_cpython_tests.py",
+]
+
+[tool.cibuildwheel.linux]
+archs = ["native"]
+
+[tool.cibuildwheel.macos]
+archs = ["native"]
+environment = { MACOSX_DEPLOYMENT_TARGET = "11.0" }
+
+[tool.cibuildwheel.windows]
+archs = ["native"]
