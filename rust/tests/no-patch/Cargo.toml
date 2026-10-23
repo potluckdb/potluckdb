@@ -1,0 +1,13 @@
+# An app that uses the potluckdb crate but forgot the [patch.crates-io] entry:
+# its build must fail with potluckdb's explanation (scripts/ci.py checks it).
+[package]
+name = "no-patch"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+rusqlite = "=0.40.2"
+potluckdb = { path = "../../potluckdb" }
+
+[workspace]

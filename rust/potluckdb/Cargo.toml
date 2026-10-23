@@ -1,0 +1,18 @@
+[package]
+name = "potluckdb"
+# The PotluckDB version; rust/scripts/set_version.py sets it for each release.
+version = "0.8.0-dev.0"
+edition = "2021"
+description = "PotluckDB for Rust: makes sure your app runs on PotluckDB's build of SQLite (which comes with the PotluckDB binary licence), and says which build it is. Sync comes in later releases."
+license = "Apache-2.0"
+repository = "https://github.com/potluckdb/potluckdb"
+homepage = "https://docs.potluckdb.com"
+readme = "README.md"
+keywords = ["potluckdb", "sqlite", "rusqlite", "sqlx", "local-first"]
+categories = ["database"]
+include = ["/src/", "/tests/", "/build.rs", "/README.md", "/LICENSE"]
+
+[dependencies]
+# The libsqlite3-sys lines PotluckDB provides (rust/libsqlite3-sys/). The app's
+# [patch.crates-io] entry replaces the one from crates.io; build.rs checks it.
+libsqlite3-sys = ">=0.37.0, <0.39.0"

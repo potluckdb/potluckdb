@@ -1,0 +1,1 @@
+# rusqlite tests that fail on PotluckDB's SQLite, one per line: "<test binary>: <test name>  # why"
