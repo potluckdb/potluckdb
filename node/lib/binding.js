@@ -1,9 +1,8 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const { TARGETS, currentTarget } = require('./targets');
 
-const PREBUILD_PLATFORMS = ['linux', 'darwin', 'win32'];
-const PREBUILD_ARCHS = ['x64', 'arm64'];
 let DEFAULT_ADDON;
 
 function getBinding(nativeBinding) {
@@ -24,39 +23,33 @@ function getBinding(nativeBinding) {
 		return DEFAULT_ADDON;
 	}
 
-	// Otherwise, try to find the binding as a prebuilt binary.
-	let filename = getPrebuildPath();
-	if (filename) {
-		return DEFAULT_ADDON = require(filename);
+	// A local build (a development checkout; the published package has none).
+	for (const configuration of ['Debug', 'Release']) {
+		const filename = path.join(__dirname, '..', 'build', configuration, 'potluckdb.node');
+		if (fs.existsSync(filename)) return DEFAULT_ADDON = require(filename);
 	}
 
-	// If no prebuilt binary was found, try the default node-gyp locations.
-	filename = path.join(__dirname, '..', 'build', 'Debug', 'better_sqlite3.node');
-	if (!fs.existsSync(filename)) {
-		filename = path.join(__dirname, '..', 'build', 'Release', 'better_sqlite3.node');
-	}
-	return DEFAULT_ADDON = require(filename);
+	// Otherwise, the platform package that npm installed with potluckdb.
+	return DEFAULT_ADDON = require(getPlatformPackagePath());
 }
 
-function getPrebuildPath() {
-	if (PREBUILD_PLATFORMS.includes(process.platform) && PREBUILD_ARCHS.includes(process.arch)) {
-		const target = `${isLinuxMusl() ? 'linuxmusl' : process.platform}-${process.arch}`;
-		const filename = path.join(__dirname, '..', 'prebuilds', `${target}.node`);
-		if (fs.existsSync(filename)) {
-			return filename;
-		}
+function getPlatformPackagePath() {
+	const target = currentTarget();
+	if (!target) {
+		throw new Error(`potluckdb has no build for ${process.platform}-${process.arch}. `
+			+ `It runs on: ${Object.keys(TARGETS).join(', ')}.`);
 	}
-	return null;
-}
-
-function isLinuxMusl() {
-	return process.platform === 'linux' && !process.report.getReport().header.glibcVersionRuntime;
+	const request = `@potluckdb/${target}/potluckdb.node`;
+	try {
+		return require.resolve(request);
+	} catch (err) {
+		if (err.code !== 'MODULE_NOT_FOUND') throw err;
+		throw new Error(`potluckdb could not find its native library: the package @potluckdb/${target} is not installed. `
+			+ 'npm installs it together with potluckdb unless optional dependencies are turned off '
+			+ '(--omit=optional, --no-optional or a lockfile made on another platform). '
+			+ 'Reinstall potluckdb with optional dependencies included.');
+	}
 }
 
 exports.getBinding = getBinding;
-exports.getPrebuildPath = getPrebuildPath;
-
-// This script is executed directly by binding.gyp to detect prebuilt binaries.
-if (require.main === module) {
-	process.stdout.write(getPrebuildPath() ? '1' : '0');
-}
+exports.getPlatformPackagePath = getPlatformPackagePath;

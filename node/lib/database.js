@@ -39,7 +39,7 @@ module.exports = function createDatabase(getAddon, allowNativeBinding) {
 		if (!Number.isInteger(timeout) || timeout < 0) throw new TypeError('Expected the "timeout" option to be a positive integer');
 		if (timeout > 0x7fffffff) throw new RangeError('Option "timeout" cannot be greater than 2147483647');
 		if (verbose != null && typeof verbose !== 'function') throw new TypeError('Expected the "verbose" option to be a function');
-		if (!allowNativeBinding && 'nativeBinding' in options) throw new TypeError('The "nativeBinding" option is only supported by the default better-sqlite3 entrypoint');
+		if (!allowNativeBinding && 'nativeBinding' in options) throw new TypeError('The "nativeBinding" option is only supported by the default potluckdb entrypoint');
 		if (allowNativeBinding && nativeBinding != null && typeof nativeBinding !== 'string' && typeof nativeBinding !== 'object') throw new TypeError('Expected the "nativeBinding" option to be a string or addon object');
 
 		// Load the native addon
@@ -76,6 +76,14 @@ module.exports = function createDatabase(getAddon, allowNativeBinding) {
 	Database.prototype.defaultSafeIntegers = wrappers.defaultSafeIntegers;
 	Database.prototype.unsafeMode = wrappers.unsafeMode;
 	Database.prototype[util.inspect] = require('./methods/inspect');
+
+	// The PotluckDB build in use (potluckdb_version() in C), e.g. "0.8.0-dev.1".
+	// Loads the native addon on first use, like new Database() does.
+	Object.defineProperty(Database, 'coreVersion', {
+		get: () => getAddon(null).coreVersion,
+		enumerable: true,
+		configurable: true,
+	});
 
 	return Database;
 };

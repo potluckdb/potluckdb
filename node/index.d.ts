@@ -1,3 +1,6 @@
+// Type declarations for potluckdb, from @types/better-sqlite3 9.6.0 (MIT,
+// Copyright (c) Microsoft Corporation; see THIRD_PARTY_NOTICES.md), with
+// better-sqlite3 13's newer methods and potluckdb's additions.
 /// <reference types="node" />
 
 // FIXME: Is this `any` really necessary?
@@ -62,6 +65,7 @@ declare namespace BetterSqlite3 {
         transaction<F extends VariableArgFunction>(fn: F): Transaction<F>;
         exec(source: string): this;
         pragma(source: string, options?: Database.PragmaOptions): unknown;
+        explain(source: string): unknown[];
         function(
             name: string,
             cb: (...params: any[]) => any,
@@ -81,7 +85,7 @@ declare namespace BetterSqlite3 {
                 result?: ((total: T) => unknown) | undefined;
             },
         ): this;
-        loadExtension(path: string): this;
+        loadExtension(path: string, entryPoint?: string): this;
         close(): this;
         defaultSafeIntegers(toggleState?: boolean): this;
         backup(destinationFile: string, options?: Database.BackupOptions): Promise<Database.BackupMetadata>;
@@ -95,6 +99,8 @@ declare namespace BetterSqlite3 {
         (filename?: string, options?: Database.Options): Database;
         prototype: Database;
         SqliteError: SqliteErrorType;
+        /** The PotluckDB build in use, e.g. "0.8.0-dev.1" (the same as SQL's potluckdb_version()). */
+        readonly coreVersion: string;
     }
 }
 
