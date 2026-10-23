@@ -3,6 +3,15 @@
 Every PotluckDB release, newest first. Versions with `-dev` or `-rc` are
 pre-releases.
 
+## 0.8.0-dev.2 (2026-10-23)
+
+.NET: the NuGet package `PotluckDB.Data.Sqlite` runs Microsoft.Data.Sqlite on PotluckDB's SQLite. Use it in place of `Microsoft.Data.Sqlite` and your code, and Dapper or EF Core on top, keeps working, on .NET 8 and later, on Linux, macOS and Windows. For sqlite-net, add `PotluckDB.SQLitePCLRaw` and call `SQLitePCL.Batteries_V2.Init()` once at startup.
+
+### Highlights
+
+- Go: `go get github.com/potluckdb/potluckdb-go/sqlite3` adds a drop-in replacement for go-sqlite3 (`github.com/mattn/go-sqlite3`) that runs on PotluckDB's SQLite. Change the import path, or add one `replace` line to `go.mod`, and your code keeps working, on Linux and macOS; Windows follows once the release has a library that MinGW can link.
+- Rust: apps that use rusqlite, sqlx or diesel run on PotluckDB's SQLite after adding one `[patch.crates-io]` entry to `Cargo.toml`, on Linux, macOS and Windows; the code stays the same. The optional `potluckdb` crate on crates.io stops the build if the entry is missing.
+
 ## 0.8.0-dev.1 (2026-10-23)
 
 The first pre-release of the new PotluckDB: our build of SQLite as a drop-in library for Linux, macOS and Windows, a drop-in `sqlite3` for Python, and a first taste of sync: the `potluckdb` command keeps a folder the same on several devices. Databases don't sync yet.
