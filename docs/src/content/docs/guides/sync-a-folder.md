@@ -71,6 +71,39 @@ keep a different amount:
 potluckdb cleanup ~/notes --keep 36h
 ```
 
+## Encryption
+
+To keep the bucket's owner (or anyone who gets into the bucket) from reading
+your files, encrypt the folder. Make a key file once:
+
+```sh
+potluckdb key new ~/notes.key
+```
+
+Copy it to every device that syncs the folder, and keep a copy somewhere
+safe: without it nobody, including you, can read the data. Then give it
+with the first sync on each device:
+
+```sh
+potluckdb sync ~/notes s3://my-bucket/notes --key-file ~/notes.key
+```
+
+Everything PotluckDB stores in the bucket is then encrypted (ChaCha20-Poly1305,
+with a fresh key for every object derived from yours): file contents, file
+names, sizes inside the folder, and history. What stays visible to the
+bucket's owner: how many objects there are, their sizes and names (version
+numbers), and when they are written. A device without the key file gets an
+error instead of data.
+
+To change keys, for example when a device is lost:
+
+```sh
+potluckdb key rotate ~/notes.key
+```
+
+New data uses the new key; older data stays readable with the old ones,
+which stay in the file. Copy the file to every device again.
+
 ## Good to know
 
 - PotluckDB keeps its own state in `.potluckdb` inside the folder. It is

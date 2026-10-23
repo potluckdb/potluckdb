@@ -95,6 +95,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write # release notes, the tag and the release
+      actions: write # start the package publishing workflows
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Release notes, tag and publish
@@ -111,3 +112,11 @@ jobs:
           gh release edit "v$VERSION" --draft=false $kind --tag "v$VERSION" \
             --target "$(git rev-parse HEAD)" --title "PotluckDB $VERSION" --notes-file ../notes.md
           echo "published https://github.com/$GITHUB_REPOSITORY/releases/tag/v$VERSION"
+      - name: Publish the npm packages
+        # Each registry trusts its own workflow file, so it runs on its own,
+        # from the published release's exact archives. On once npm trusts it.
+        if: vars.NPM_PUBLISHING == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run node.yml -R "$GITHUB_REPOSITORY" -f version="$VERSION" -f publish=true
