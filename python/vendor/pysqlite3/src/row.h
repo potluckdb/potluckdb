@@ -19,12 +19,13 @@
  * 2. Altered source versions must be plainly marked as such, and must not be
  *    misrepresented as being the original software.
  * 3. This notice may not be removed or altered from any source distribution.
+ *
+ * Altered for PotluckDB (see ../README.md): includes module.h.
  */
 
 #ifndef PYSQLITE_ROW_H
 #define PYSQLITE_ROW_H
-#define PY_SSIZE_T_CLEAN
-#include "Python.h"
+#include "module.h"
 
 typedef struct _Row
 {
@@ -32,8 +33,6 @@ typedef struct _Row
     PyObject* data;
     PyObject* description;
 } pysqlite_Row;
-
-extern PyTypeObject pysqlite_RowType;
 
 int pysqlite_row_setup_types(void);
 

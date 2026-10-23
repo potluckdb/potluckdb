@@ -19,24 +19,19 @@
  * 2. Altered source versions must be plainly marked as such, and must not be
  *    misrepresented as being the original software.
  * 3. This notice may not be removed or altered from any source distribution.
+ *
+ * Altered for PotluckDB (see ../README.md): includes module.h.
  */
 
 #ifndef PYSQLITE_PREPARE_PROTOCOL_H
 #define PYSQLITE_PREPARE_PROTOCOL_H
-#define PY_SSIZE_T_CLEAN
-#include "Python.h"
+#include "module.h"
 
 typedef struct
 {
     PyObject_HEAD
 } pysqlite_PrepareProtocol;
 
-extern PyTypeObject pysqlite_PrepareProtocolType;
-
-int pysqlite_prepare_protocol_init(pysqlite_PrepareProtocol* self, PyObject* args, PyObject* kwargs);
-void pysqlite_prepare_protocol_dealloc(pysqlite_PrepareProtocol* self);
-
 int pysqlite_prepare_protocol_setup_types(void);
 
-#define UNKNOWN (-1)
 #endif

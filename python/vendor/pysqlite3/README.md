@@ -16,4 +16,35 @@ every source file carry the zlib licence text; the zlib text is what applies.
 
 ## Modifications
 
-None yet: these are the files exactly as released.
+These sources are altered (zlib licence, clause 2): every changed file says
+so at the end of its licence comment, and the first commit that added this
+folder holds the files exactly as released. The changes, written for
+PotluckDB (no code copied from CPython):
+
+- **Built as `potluckdb._sqlite3`** (`MODULE_NAME` is `potluckdb`), so it never
+  clashes with the standard library's `_sqlite3` or with pysqlite3 in the same
+  process. It also exposes `core_version` (PotluckDB's `potluckdb_version()`)
+  and `__version__` (the package version).
+- **Behaves like the `sqlite3` module of the Python it is built for** (3.10 to
+  3.14; one wheel per version, so differences are chosen at compile time in
+  `compat.h`): connection, cursor, row and blob behaviour, error classes and
+  messages, deprecation warnings, and the constants of that version.
+- **Features added** to match Python 3.11 to 3.14: `Connection.blobopen()` and
+  the `Blob` type (replacing pysqlite3's `open_blob()`), `serialize()` /
+  `deserialize()`, `setlimit()` / `getlimit()`, `setconfig()` / `getconfig()`,
+  the `autocommit` attribute and `LEGACY_TRANSACTION_CONTROL`, `iterdump()`
+  (with `filter=`), `create_window_function()` with the standard signature,
+  `load_extension(entrypoint=)`, extended error codes on exceptions
+  (`sqlite_errorcode`, `sqlite_errorname`), all result-code, limit and
+  configuration constants, `threadsafety` from SQLite's threading mode.
+- **Rewritten internals**: rows are read as the statement is stepped (no
+  prefetching), statements are cached with `functools.lru_cache` (`cache.c`
+  and `cache.h` removed), parameter binding moved from `statement.c` to
+  `cursor.c`, callbacks (functions, aggregates, collations, trace, progress,
+  authorizer) use reference-counted contexts that SQLite releases, objects
+  support the garbage collector, and unclosed connections warn (3.13+).
+- **Removed pysqlite3-only extras**: `Connection(flags=, vfs=)`,
+  `open_blob()`, `set_busy_handler()`, `set_busy_timeout()`, `set_key()`,
+  `reset_key()`.
+- **New file `compat.h`**: helpers so the same sources build for CPython 3.10
+  to 3.14 (same zlib licence as the rest of this folder).

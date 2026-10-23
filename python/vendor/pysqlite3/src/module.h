@@ -19,36 +19,71 @@
  * 2. Altered source versions must be plainly marked as such, and must not be
  *    misrepresented as being the original software.
  * 3. This notice may not be removed or altered from any source distribution.
+ *
+ * Altered for PotluckDB (see ../README.md): module state gathered in one
+ * struct, and definitions for the features of Python 3.11 to 3.14's sqlite3.
  */
 
 #ifndef PYSQLITE_MODULE_H
 #define PYSQLITE_MODULE_H
-#define PY_SSIZE_T_CLEAN
-#include "Python.h"
+#include "compat.h"
+#include "sqlite3.h"
 
 #define PYSQLITE_VERSION "2.6.0"
+#define LEGACY_TRANSACTION_CONTROL -1
 
-extern PyObject* pysqlite_Error;
-extern PyObject* pysqlite_Warning;
-extern PyObject* pysqlite_InterfaceError;
-extern PyObject* pysqlite_DatabaseError;
-extern PyObject* pysqlite_InternalError;
-extern PyObject* pysqlite_OperationalError;
-extern PyObject* pysqlite_ProgrammingError;
-extern PyObject* pysqlite_IntegrityError;
-extern PyObject* pysqlite_DataError;
-extern PyObject* pysqlite_NotSupportedError;
+#ifndef MODULE_NAME
+#  define MODULE_NAME "potluckdb"
+#endif
 
-/* A dictionary, mapping column types (INTEGER, VARCHAR, etc.) to converter
- * functions, that convert the SQL value to the appropriate Python value.
- * The key is uppercase.
- */
-extern PyObject* _pysqlite_converters;
+#if SQLITE_VERSION_NUMBER < 3025000
+#  error "SQLite 3.25.0 or newer is required"
+#endif
 
-extern int _pysqlite_enable_callback_tracebacks;
-extern int pysqlite_BaseTypeAdapted;
+typedef struct {
+    PyObject *DataError;
+    PyObject *DatabaseError;
+    PyObject *Error;
+    PyObject *IntegrityError;
+    PyObject *InterfaceError;
+    PyObject *InternalError;
+    PyObject *NotSupportedError;
+    PyObject *OperationalError;
+    PyObject *ProgrammingError;
+    PyObject *Warning;
 
-extern const char *sqlite3ErrName(int rc);
+    /* Column type name (upper case) -> converter callable. */
+    PyObject *converters;
+    /* (type, protocol) -> adapter callable. */
+    PyObject *adapters;
+    /* functools.lru_cache, used for the statement cache. */
+    PyObject *lru_cache;
+
+    int BaseTypeAdapted;
+    int enable_callback_tracebacks;
+
+    PyObject *str___adapt__;
+    PyObject *str___conform__;
+    PyObject *str_executescript;
+    PyObject *str_finalize;
+    PyObject *str_inverse;
+    PyObject *str_step;
+    PyObject *str_upper;
+    PyObject *str_value;
+} pysqlite_state;
+
+/* The module uses single-phase initialisation, so there is one state. */
+extern pysqlite_state pysqlite_global_state;
+#define pysqlite_get_state() (&pysqlite_global_state)
+
+extern PyTypeObject pysqlite_BlobType;
+extern PyTypeObject pysqlite_ConnectionType;
+extern PyTypeObject pysqlite_CursorType;
+extern PyTypeObject pysqlite_PrepareProtocolType;
+extern PyTypeObject pysqlite_RowType;
+extern PyTypeObject pysqlite_StatementType;
+
+extern const char *pysqlite_error_name(int rc);
 
 #define PARSE_DECLTYPES 1
 #define PARSE_COLNAMES 2

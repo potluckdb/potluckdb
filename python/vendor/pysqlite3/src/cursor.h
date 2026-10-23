@@ -19,52 +19,40 @@
  * 2. Altered source versions must be plainly marked as such, and must not be
  *    misrepresented as being the original software.
  * 3. This notice may not be removed or altered from any source distribution.
+ *
+ * Altered for PotluckDB (see ../README.md): no row prefetching; the
+ * statement is stepped as rows are fetched.
  */
 
 #ifndef PYSQLITE_CURSOR_H
 #define PYSQLITE_CURSOR_H
-#define PY_SSIZE_T_CLEAN
-#include "Python.h"
-
 #include "statement.h"
 #include "connection.h"
-#include "module.h"
 
-typedef struct
-{
+typedef struct {
     PyObject_HEAD
-    pysqlite_Connection* connection;
-    PyObject* description;
-    PyObject* row_cast_map;
+    pysqlite_Connection *connection;
+    PyObject *description;
+    PyObject *row_cast_map;
+#if PYSQLITE_PY313
+    uint32_t arraysize;
+#else
     int arraysize;
-    PyObject* lastrowid;
+#endif
+    PyObject *lastrowid;
     long rowcount;
-    PyObject* row_factory;
-    pysqlite_Statement* statement;
+    PyObject *row_factory;
+    pysqlite_Statement *statement;
     int closed;
-    int reset;
     int locked;
     int initialized;
 
-    /* the next row to be returned, NULL if no next row available */
-    PyObject* next_row;
-
-    PyObject* in_weakreflist; /* List of weak references */
+    PyObject *in_weakreflist;
 } pysqlite_Cursor;
 
-extern PyTypeObject pysqlite_CursorType;
-
-PyObject* pysqlite_cursor_execute(pysqlite_Cursor* self, PyObject* args);
-PyObject* pysqlite_cursor_executemany(pysqlite_Cursor* self, PyObject* args);
-PyObject* pysqlite_cursor_getiter(pysqlite_Cursor *self);
-PyObject* pysqlite_cursor_iternext(pysqlite_Cursor *self);
-PyObject* pysqlite_cursor_fetchone(pysqlite_Cursor* self, PyObject* args);
-PyObject* pysqlite_cursor_fetchmany(pysqlite_Cursor* self, PyObject* args, PyObject* kwargs);
-PyObject* pysqlite_cursor_fetchall(pysqlite_Cursor* self, PyObject* args);
-PyObject* pysqlite_noop(pysqlite_Connection* self, PyObject* args);
-PyObject* pysqlite_cursor_close(pysqlite_Cursor* self, PyObject* args);
+PyObject *pysqlite_query_execute(pysqlite_Cursor *self, int multiple, PyObject *sql,
+                                 PyObject *parameters);
 
 int pysqlite_cursor_setup_types(void);
 
-#define UNKNOWN (-1)
 #endif

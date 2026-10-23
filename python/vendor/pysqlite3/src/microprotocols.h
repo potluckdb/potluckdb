@@ -21,32 +21,18 @@
  * 2. Altered source versions must be plainly marked as such, and must not be
  *    misrepresented as being the original software.
  * 3. This notice may not be removed or altered from any source distribution.
+ *
+ * Altered for PotluckDB (see ../README.md): the adapter registry lives
+ * in the module state.
  */
 
 #ifndef PSYCOPG_MICROPROTOCOLS_H
 #define PSYCOPG_MICROPROTOCOLS_H 1
-
-#define PY_SSIZE_T_CLEAN
-#include <Python.h>
-
-/** the names of the three mandatory methods **/
-
-#define MICROPROTOCOLS_GETQUOTED_NAME "getquoted"
-#define MICROPROTOCOLS_GETSTRING_NAME "getstring"
-#define MICROPROTOCOLS_GETBINARY_NAME "getbinary"
-
-/** exported functions **/
+#include "module.h"
 
 /* used by module.c to init the microprotocols system */
-extern int pysqlite_microprotocols_init(PyObject *dict);
-extern int pysqlite_microprotocols_add(
-    PyTypeObject *type, PyObject *proto, PyObject *cast);
-extern PyObject *pysqlite_microprotocols_adapt(
-    PyObject *obj, PyObject *proto, PyObject *alt);
-
-extern PyObject *
-    pysqlite_adapt(pysqlite_Cursor* self, PyObject *args);
-#define pysqlite_adapt_doc \
-    "adapt(obj, protocol, alternate) -> adapt obj to given protocol. Non-standard."
+int pysqlite_microprotocols_init(PyObject *module);
+int pysqlite_microprotocols_add(PyTypeObject *type, PyObject *proto, PyObject *cast);
+PyObject *pysqlite_microprotocols_adapt(PyObject *obj, PyObject *proto, PyObject *alt);
 
 #endif /* !defined(PSYCOPG_MICROPROTOCOLS_H) */

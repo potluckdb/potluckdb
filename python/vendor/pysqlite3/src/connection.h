@@ -19,110 +19,80 @@
  * 2. Altered source versions must be plainly marked as such, and must not be
  *    misrepresented as being the original software.
  * 3. This notice may not be removed or altered from any source distribution.
+ *
+ * Altered for PotluckDB (see ../README.md): callback contexts, the
+ * autocommit attribute, and the statement cache as an LRU cache function.
  */
 
 #ifndef PYSQLITE_CONNECTION_H
 #define PYSQLITE_CONNECTION_H
-#define PY_SSIZE_T_CLEAN
-#include "Python.h"
-#include "pythread.h"
-#include "structmember.h"
-
-#include "cache.h"
 #include "module.h"
+#include "pythread.h"
 
-#include "sqlite3.h"
+/* What a callback registered with SQLite (function, aggregate, collation,
+ * trace, progress, authorizer) needs; freed when SQLite drops it. */
+typedef struct {
+    PyObject *callable;
+    Py_ssize_t refcount;
+} pysqlite_callback_context;
 
-typedef struct
-{
+enum autocommit_mode {
+    AUTOCOMMIT_LEGACY = LEGACY_TRANSACTION_CONTROL,
+    AUTOCOMMIT_ENABLED = 1,
+    AUTOCOMMIT_DISABLED = 0,
+};
+
+typedef struct {
     PyObject_HEAD
-    sqlite3* db;
+    sqlite3 *db;
 
-    /* the type detection mode. Only 0, PARSE_DECLTYPES, PARSE_COLNAMES or a
-     * bitwise combination thereof makes sense */
+    /* 0, PARSE_DECLTYPES, PARSE_COLNAMES or both */
     int detect_types;
 
-    /* the timeout value in seconds for database locks */
-    double timeout;
+    /* NULL for autocommit, otherwise "", "DEFERRED", "IMMEDIATE" or
+     * "EXCLUSIVE" (static strings) */
+    const char *isolation_level;
+    enum autocommit_mode autocommit;
 
-    /* for internal use in the timeout handler: when did the timeout handler
-     * first get called with count=0? */
-    double timeout_started;
-
-    /* None for autocommit, otherwise a PyUnicode with the isolation level */
-    PyObject* isolation_level;
-
-    /* NULL for autocommit, otherwise a string with the BEGIN statement */
-    const char* begin_statement;
-
-    /* 1 if a check should be performed for each API call if the connection is
-     * used from the same thread it was created in */
     int check_same_thread;
-
     int initialized;
-
-    /* thread identification of the thread the connection was created in */
     unsigned long thread_ident;
 
-    pysqlite_Cache* statement_cache;
+    /* functools.lru_cache-wrapped statement factory */
+    PyObject *statement_cache;
 
-    /* Lists of weak references to statements, blobs and cursors used within this connection */
-    PyObject* statements;
-    PyObject* cursors;
-    PyObject* blobs;
-
-    /* Counters for how many statements/cursors were created in the connection. May be
-     * reset to 0 at certain intervals */
-    int created_statements;
+    /* weak references to cursors and blobs of this connection */
+    PyObject *cursors;
+    PyObject *blobs;
     int created_cursors;
 
-    PyObject* row_factory;
+    PyObject *row_factory;
+    PyObject *text_factory;
 
-    /* Determines how bytestrings from SQLite are converted to Python objects:
-     * - PyUnicode_Type:        Python Unicode objects are constructed from UTF-8 bytestrings
-     * - PyBytes_Type:          The bytestrings are returned as-is.
-     * - Any custom callable:   Any object returned from the callable called with the bytestring
-     *                          as single parameter.
-     */
-    PyObject* text_factory;
+    pysqlite_callback_context *trace_ctx;
+    pysqlite_callback_context *progress_ctx;
+    pysqlite_callback_context *authorizer_ctx;
 
-    /* remember references to functions/classes used in trace/progress/auth cb */
-    PyObject* function_pinboard_trace_callback;
-    PyObject* function_pinboard_progress_handler;
-    PyObject* function_pinboard_authorizer_cb;
-    PyObject* function_pinboard_busy_handler_cb;
+    /* Exception classes (borrowed references), for the DB-API extension */
+    PyObject *Warning;
+    PyObject *Error;
+    PyObject *InterfaceError;
+    PyObject *DatabaseError;
+    PyObject *DataError;
+    PyObject *OperationalError;
+    PyObject *IntegrityError;
+    PyObject *InternalError;
+    PyObject *ProgrammingError;
+    PyObject *NotSupportedError;
 
-    /* a dictionary of registered collation name => collation callable mappings */
-    PyObject* collations;
-
-    /* Exception objects */
-    PyObject* Warning;
-    PyObject* Error;
-    PyObject* InterfaceError;
-    PyObject* DatabaseError;
-    PyObject* DataError;
-    PyObject* OperationalError;
-    PyObject* IntegrityError;
-    PyObject* InternalError;
-    PyObject* ProgrammingError;
-    PyObject* NotSupportedError;
+    PyObject *in_weakreflist;
 } pysqlite_Connection;
 
-extern PyTypeObject pysqlite_ConnectionType;
+int pysqlite_check_thread(pysqlite_Connection *self);
+int pysqlite_check_connection(pysqlite_Connection *con);
 
-PyObject* pysqlite_connection_alloc(PyTypeObject* type, int aware);
-void pysqlite_connection_dealloc(pysqlite_Connection* self);
-PyObject* pysqlite_connection_cursor(pysqlite_Connection* self, PyObject* args, PyObject* kwargs);
-PyObject* pysqlite_connection_close(pysqlite_Connection* self, PyObject* args);
-PyObject* _pysqlite_connection_begin(pysqlite_Connection* self);
-PyObject* pysqlite_connection_commit(pysqlite_Connection* self, PyObject* args);
-PyObject* pysqlite_connection_rollback(pysqlite_Connection* self, PyObject* args);
-PyObject* pysqlite_connection_new(PyTypeObject* type, PyObject* args, PyObject* kw);
-int pysqlite_connection_init(pysqlite_Connection* self, PyObject* args, PyObject* kwargs);
-
-int pysqlite_connection_register_cursor(pysqlite_Connection* connection, PyObject* cursor);
-int pysqlite_check_thread(pysqlite_Connection* self);
-int pysqlite_check_connection(pysqlite_Connection* con);
+/* Shared with cursor.c */
+PyObject *pysqlite_connection_cursor_new(pysqlite_Connection *self, PyObject *factory);
 
 int pysqlite_connection_setup_types(void);
 

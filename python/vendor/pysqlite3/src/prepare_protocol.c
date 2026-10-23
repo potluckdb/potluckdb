@@ -19,68 +19,31 @@
  * 2. Altered source versions must be plainly marked as such, and must not be
  *    misrepresented as being the original software.
  * 3. This notice may not be removed or altered from any source distribution.
+ *
+ * Altered for PotluckDB (see ../README.md): designated initialisers and a
+ * docstring.
  */
 
 #include "prepare_protocol.h"
 
-int pysqlite_prepare_protocol_init(pysqlite_PrepareProtocol* self, PyObject* args, PyObject* kwargs)
+static int
+prepare_protocol_init(PyObject *self, PyObject *args, PyObject *kwargs)
 {
     return 0;
 }
 
-void pysqlite_prepare_protocol_dealloc(pysqlite_PrepareProtocol* self)
-{
-    Py_TYPE(self)->tp_free((PyObject*)self);
-}
-
-PyTypeObject pysqlite_PrepareProtocolType= {
-        PyVarObject_HEAD_INIT(NULL, 0)
-        MODULE_NAME ".PrepareProtocol",                 /* tp_name */
-        sizeof(pysqlite_PrepareProtocol),               /* tp_basicsize */
-        0,                                              /* tp_itemsize */
-        (destructor)pysqlite_prepare_protocol_dealloc,  /* tp_dealloc */
-        0,                                              /* tp_print */
-        0,                                              /* tp_getattr */
-        0,                                              /* tp_setattr */
-        0,                                              /* tp_reserved */
-        0,                                              /* tp_repr */
-        0,                                              /* tp_as_number */
-        0,                                              /* tp_as_sequence */
-        0,                                              /* tp_as_mapping */
-        0,                                              /* tp_hash */
-        0,                                              /* tp_call */
-        0,                                              /* tp_str */
-        0,                                              /* tp_getattro */
-        0,                                              /* tp_setattro */
-        0,                                              /* tp_as_buffer */
-        Py_TPFLAGS_DEFAULT,                             /* tp_flags */
-        0,                                              /* tp_doc */
-        0,                                              /* tp_traverse */
-        0,                                              /* tp_clear */
-        0,                                              /* tp_richcompare */
-        0,                                              /* tp_weaklistoffset */
-        0,                                              /* tp_iter */
-        0,                                              /* tp_iternext */
-        0,                                              /* tp_methods */
-        0,                                              /* tp_members */
-        0,                                              /* tp_getset */
-        0,                                              /* tp_base */
-        0,                                              /* tp_dict */
-        0,                                              /* tp_descr_get */
-        0,                                              /* tp_descr_set */
-        0,                                              /* tp_dictoffset */
-        (initproc)pysqlite_prepare_protocol_init,       /* tp_init */
-        0,                                              /* tp_alloc */
-        0,                                              /* tp_new */
-        0                                               /* tp_free */
+PyTypeObject pysqlite_PrepareProtocolType = {
+    PyVarObject_HEAD_INIT(NULL, 0)
+    .tp_name = MODULE_NAME ".PrepareProtocol",
+    .tp_basicsize = sizeof(pysqlite_PrepareProtocol),
+    .tp_flags = Py_TPFLAGS_DEFAULT,
+    .tp_doc = PyDoc_STR("PEP 246 style object adaption protocol type."),
+    .tp_init = prepare_protocol_init,
+    .tp_new = PyType_GenericNew,
 };
 
-extern int pysqlite_prepare_protocol_setup_types(void)
+int
+pysqlite_prepare_protocol_setup_types(void)
 {
-    int rc;
-    pysqlite_PrepareProtocolType.tp_new = PyType_GenericNew;
-    //Py_TYPE(&pysqlite_PrepareProtocolType)= &PyType_Type;
-    rc = PyType_Ready(&pysqlite_PrepareProtocolType);
-    return rc;
-    //return PyType_Ready(&pysqlite_PrepareProtocolType);
+    return PyType_Ready(&pysqlite_PrepareProtocolType);
 }

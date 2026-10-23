@@ -19,43 +19,31 @@
  * 2. Altered source versions must be plainly marked as such, and must not be
  *    misrepresented as being the original software.
  * 3. This notice may not be removed or altered from any source distribution.
+ *
+ * Altered for PotluckDB (see ../README.md): errors carry the extended
+ * SQLite result code and its name (sqlite_errorcode, sqlite_errorname);
+ * SQLITE_RANGE and SQLITE_MISUSE raise InterfaceError; errors can be raised
+ * from a result code alone.
  */
 
-#include "module.h"
-#include "connection.h"
+#include "util.h"
 
-int pysqlite_step(sqlite3_stmt* statement, pysqlite_Connection* connection)
+/* The exception class for a primary result code; NULL if no exception is to
+ * be raised (SQLITE_OK) or one is set already (out of memory). */
+static PyObject *
+exception_for(int code)
 {
-    int rc;
-
-    Py_BEGIN_ALLOW_THREADS
-    rc = sqlite3_step(statement);
-    Py_END_ALLOW_THREADS
-
-    return rc;
-}
-
-/**
- * Checks the SQLite error code and sets the appropriate DB-API exception.
- * Returns the error code (0 means no error occurred).
- */
-int _pysqlite_seterror(sqlite3* db)
-{
-    PyObject *exc_class;
-    int errorcode = sqlite3_errcode(db);
-
-    switch (errorcode)
-    {
+    pysqlite_state *state = pysqlite_get_state();
+    switch (code & 0xff) {
         case SQLITE_OK:
             PyErr_Clear();
-            return errorcode;
+            return NULL;
         case SQLITE_INTERNAL:
         case SQLITE_NOTFOUND:
-            exc_class = pysqlite_InternalError;
-            break;
+            return state->InternalError;
         case SQLITE_NOMEM:
             (void)PyErr_NoMemory();
-            return errorcode;
+            return NULL;
         case SQLITE_ERROR:
         case SQLITE_PERM:
         case SQLITE_ABORT:
@@ -69,107 +57,86 @@ int _pysqlite_seterror(sqlite3* db)
         case SQLITE_PROTOCOL:
         case SQLITE_EMPTY:
         case SQLITE_SCHEMA:
-            exc_class = pysqlite_OperationalError;
-            break;
+            return state->OperationalError;
         case SQLITE_CORRUPT:
-            exc_class = pysqlite_DatabaseError;
-            break;
+            return state->DatabaseError;
         case SQLITE_TOOBIG:
-            exc_class = pysqlite_DataError;
-            break;
+            return state->DataError;
         case SQLITE_CONSTRAINT:
         case SQLITE_MISMATCH:
-            exc_class = pysqlite_IntegrityError;
-            break;
+            return state->IntegrityError;
         case SQLITE_MISUSE:
-            exc_class = pysqlite_ProgrammingError;;
-            break;
+        case SQLITE_RANGE:
+            return state->InterfaceError;
         default:
-            exc_class = pysqlite_DatabaseError;
-            break;
+            return state->DatabaseError;
     }
-
-    /* Create and set the exception. */
-    {
-        const char *error_msg;
-        const char *error_name;
-        PyObject *exc = NULL;
-        PyObject *args = NULL;
-        PyObject *py_code = NULL;
-        PyObject *py_name = NULL;
-
-        error_name = sqlite3ErrName(errorcode);
-
-        error_msg = sqlite3_errmsg(db);
-
-        args = Py_BuildValue("(s)", error_msg);
-        if (!args)
-            goto error;
-
-        exc = PyObject_Call(exc_class, args, NULL);
-        if (!exc)
-            goto error;
-
-        py_code = Py_BuildValue("i", errorcode);
-        if (!py_code)
-            goto error;
-
-        if (PyObject_SetAttrString(exc, "sqlite_errorcode", py_code) < 0)
-            goto error;
-
-        py_name = Py_BuildValue("s", error_name);
-        if (!py_name)
-            goto error;
-
-        if (PyObject_SetAttrString(exc, "sqlite_errorname", py_name) < 0)
-            goto error;
-
-        PyErr_SetObject((PyObject *) Py_TYPE(exc), exc);
-
-    error:
-        Py_XDECREF(py_code);
-        Py_XDECREF(py_name);
-        Py_XDECREF(args);
-        Py_XDECREF(exc);
-    }
-
-    return errorcode;
 }
 
-#ifdef WORDS_BIGENDIAN
-# define IS_LITTLE_ENDIAN 0
-#else
-# define IS_LITTLE_ENDIAN 1
-#endif
+static void
+raise_with_code(PyObject *exc_class, int code, const char *message)
+{
+    PyObject *text = PyUnicode_FromString(message);
+    if (text == NULL) {
+        return;
+    }
+    PyObject *exc = PyObject_CallOneArg(exc_class, text);
+    Py_DECREF(text);
+    if (exc == NULL) {
+        return;
+    }
+
+    PyObject *value = PyLong_FromLong(code);
+    if (value == NULL || PyObject_SetAttrString(exc, "sqlite_errorcode", value) < 0) {
+        Py_XDECREF(value);
+        Py_DECREF(exc);
+        return;
+    }
+    Py_DECREF(value);
+
+    const char *name = pysqlite_error_name(code);
+    value = PyUnicode_FromString(name ? name : "unknown");
+    if (value == NULL || PyObject_SetAttrString(exc, "sqlite_errorname", value) < 0) {
+        Py_XDECREF(value);
+        Py_DECREF(exc);
+        return;
+    }
+    Py_DECREF(value);
+
+    PyErr_SetObject(exc_class, exc);
+    Py_DECREF(exc);
+}
+
+void
+pysqlite_set_error_from_code(int code)
+{
+    PyObject *exc_class = exception_for(code);
+    if (exc_class != NULL) {
+        raise_with_code(exc_class, code, sqlite3_errstr(code));
+    }
+}
+
+void
+pysqlite_set_error_from_db(sqlite3 *db)
+{
+    PyObject *exc_class = exception_for(sqlite3_errcode(db));
+    if (exc_class != NULL) {
+        raise_with_code(exc_class, sqlite3_extended_errcode(db), sqlite3_errmsg(db));
+    }
+}
 
 sqlite_int64
-_pysqlite_long_as_int64(PyObject * py_val)
+pysqlite_long_as_int64(PyObject *value)
 {
     int overflow;
-    long long value = PyLong_AsLongLongAndOverflow(py_val, &overflow);
-    if (value == -1 && PyErr_Occurred())
+    long long result = PyLong_AsLongLongAndOverflow(value, &overflow);
+    if (result == -1 && PyErr_Occurred()) {
         return -1;
-    if (!overflow) {
-# if SIZEOF_LONG_LONG > 8
-        if (-0x8000000000000000LL <= value && value <= 0x7FFFFFFFFFFFFFFFLL)
-# endif
-            return value;
     }
-    else if (sizeof(value) < sizeof(sqlite_int64)) {
-        sqlite_int64 int64val;
-#if PY_VERSION_HEX < 0x030D0000
-        if (_PyLong_AsByteArray((PyLongObject *)py_val,
-                                (unsigned char *)&int64val, sizeof(int64val),
-                                IS_LITTLE_ENDIAN, 1 /* signed */) >= 0) {
-#else
-        if (_PyLong_AsByteArray((PyLongObject *)py_val,
-                                (unsigned char *)&int64val, sizeof(int64val),
-                                IS_LITTLE_ENDIAN, 1 /* signed */, 1) >= 0) {
-#endif
-            return int64val;
-        }
+    if (overflow) {
+        PyErr_SetString(PyExc_OverflowError,
+                        "Python int too large to convert to SQLite INTEGER");
+        return -1;
     }
-    PyErr_SetString(PyExc_OverflowError,
-                    "Python int too large to convert to SQLite INTEGER");
-    return -1;
+    return (sqlite_int64)result;
 }

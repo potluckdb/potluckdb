@@ -19,66 +19,21 @@
  * 2. Altered source versions must be plainly marked as such, and must not be
  *    misrepresented as being the original software.
  * 3. This notice may not be removed or altered from any source distribution.
+ *
+ * Altered for PotluckDB (see ../README.md): errors carry the extended
+ * SQLite result code; errors can be raised from a result code alone.
  */
 
 #ifndef PYSQLITE_UTIL_H
 #define PYSQLITE_UTIL_H
-#define PY_SSIZE_T_CLEAN
-#include "Python.h"
-#include "pythread.h"
-#include "sqlite3.h"
-#include "connection.h"
+#include "module.h"
 
-int pysqlite_step(sqlite3_stmt* statement, pysqlite_Connection* connection);
+/* Raise the DB-API exception for the connection's last error. */
+void pysqlite_set_error_from_db(sqlite3 *db);
+/* Raise the DB-API exception for a result code. */
+void pysqlite_set_error_from_code(int code);
 
-/**
- * Checks the SQLite error code and sets the appropriate DB-API exception.
- * Returns the error code (0 means no error occurred).
- */
-int _pysqlite_seterror(sqlite3* db);
-
-sqlite_int64 _pysqlite_long_as_int64(PyObject * value);
-
-#ifndef _Py_CAST
-#  define _Py_CAST(type, expr) ((type)(expr))
-#endif
-
-// Cast argument to PyObject* type.
-#ifndef _PyObject_CAST
-#  define _PyObject_CAST(op) _Py_CAST(PyObject*, op)
-#endif
-
-#if PY_VERSION_HEX < 0x030A00A3 && !defined(Py_NewRef)
-static inline PyObject* _Py_NewRef(PyObject *obj)
-{
-    Py_INCREF(obj);
-    return obj;
-}
-#define Py_NewRef(obj) _Py_NewRef(_PyObject_CAST(obj))
-#endif
-
-#if PY_VERSION_HEX < 0x030D0000
-static inline int PyWeakref_GetRef(PyObject *ref, PyObject **pobj)
-{
-    PyObject *obj;
-    if (ref != NULL && !PyWeakref_Check(ref)) {
-        *pobj = NULL;
-        PyErr_SetString(PyExc_TypeError, "expected a weakref");
-        return -1;
-    }
-    obj = PyWeakref_GetObject(ref);
-    if (obj == NULL) {
-        // SystemError if ref is NULL
-        *pobj = NULL;
-        return -1;
-    }
-    if (obj == Py_None) {
-        *pobj = NULL;
-        return 0;
-    }
-    *pobj = Py_NewRef(obj);
-    return (*pobj != NULL);
-}
-#endif
+/* A Python int as a 64-bit SQLite integer; -1 with an exception on error. */
+sqlite_int64 pysqlite_long_as_int64(PyObject *value);
 
 #endif
