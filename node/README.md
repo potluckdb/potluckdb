@@ -61,6 +61,8 @@ better-sqlite3. What differs:
   better-sqlite3's behaviour: `db.pragma('synchronous = NORMAL')`.
 - File names starting with `file:` are [URIs](https://sqlite.org/uri.html).
 - The `verbose` logger receives bound values in full, not cut at 32 bytes.
+- FTS3 and FTS4 queries use SQLite's standard syntax, without `AND`, `NOT`
+  and parentheses (FTS5 is the same in both).
 - `LIKE` matches BLOBs, and `soundex()` is not available.
 
 ## Licence
