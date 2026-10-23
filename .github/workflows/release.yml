@@ -113,6 +113,11 @@ jobs:
           gh release edit "v$VERSION" --draft=false $kind --tag "v$VERSION" \
             --target "$(git rev-parse HEAD)" --title "PotluckDB $VERSION" --notes-file ../notes.md
           echo "published https://github.com/$GITHUB_REPOSITORY/releases/tag/v$VERSION"
+      - name: Publish the Python package
+        if: vars.PYPI_PUBLISHING == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run python.yml -R "$GITHUB_REPOSITORY" -f version="$VERSION" -f publish=true
       - name: Publish the npm packages
         # Each registry trusts its own workflow file, so it runs on its own,
         # from the published release's exact archives. On once npm trusts it.
