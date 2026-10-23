@@ -1,0 +1,66 @@
+{
+  "name": "potluckdb",
+  "version": "0.8.0-dev.0",
+  "description": "PotluckDB for Node.js: a drop-in replacement for better-sqlite3 that runs on PotluckDB's build of SQLite.",
+  "keywords": [
+    "potluckdb",
+    "sqlite",
+    "sqlite3",
+    "better-sqlite3",
+    "database",
+    "local-first",
+    "sync"
+  ],
+  "homepage": "https://github.com/potluckdb/potluckdb/tree/main/node#readme",
+  "bugs": "https://github.com/potluckdb/potluckdb/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/potluckdb/potluckdb.git",
+    "directory": "node"
+  },
+  "license": "Apache-2.0",
+  "main": "lib/index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "import": { "types": "./index.d.mts", "default": "./index.mjs" },
+      "default": { "types": "./index.d.ts", "default": "./lib/index.js" }
+    },
+    "./linux-x64": { "types": "./index.d.ts", "default": "./lib/linux-x64.js" },
+    "./linux-arm64": { "types": "./index.d.ts", "default": "./lib/linux-arm64.js" },
+    "./linuxmusl-x64": { "types": "./index.d.ts", "default": "./lib/linuxmusl-x64.js" },
+    "./linuxmusl-arm64": { "types": "./index.d.ts", "default": "./lib/linuxmusl-arm64.js" },
+    "./darwin-x64": { "types": "./index.d.ts", "default": "./lib/darwin-x64.js" },
+    "./darwin-arm64": { "types": "./index.d.ts", "default": "./lib/darwin-arm64.js" },
+    "./win32-x64": { "types": "./index.d.ts", "default": "./lib/win32-x64.js" },
+    "./win32-arm64": { "types": "./index.d.ts", "default": "./lib/win32-arm64.js" },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/",
+    "index.d.ts",
+    "index.d.mts",
+    "index.mjs",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "gypfile": false,
+  "scripts": {
+    "build": "node scripts/build.js",
+    "test": "node test/run-better-sqlite3.js && node --test test/*.test.js",
+    "test:better-sqlite3": "node test/run-better-sqlite3.js",
+    "test:own": "node --test test/*.test.js"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "9.6.0",
+    "@types/node": "24.19.1",
+    "chai": "4.5.0",
+    "fs-extra": "11.4.1",
+    "mocha": "12.0.3",
+    "node-addon-api": "8.9.2",
+    "node-gyp": "12.4.0",
+    "typescript": "5.9.3"
+  }
+}

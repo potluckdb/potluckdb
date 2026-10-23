@@ -162,7 +162,9 @@ NODE_METHOD(Database::JS_new) {
 		return env.Undefined();
 	}
 
-	assert(sqlite3_db_mutex(db_handle) == NULL);
+	// PotluckDB's library is built thread-safe (SQLITE_THREADSAFE=1), so unlike
+	// better-sqlite3's own build (SQLITE_THREADSAFE=2) a connection has a mutex.
+	// It is kept (no SQLITE_OPEN_NOMUTEX), so connections work as the library intends.
 	sqlite3_extended_result_codes(db_handle, 1);
 	sqlite3_busy_timeout(db_handle, timeout);
 	sqlite3_limit(db_handle, SQLITE_LIMIT_LENGTH, MAX_BUFFER_SIZE < MAX_STRING_SIZE ? MAX_BUFFER_SIZE : MAX_STRING_SIZE);
@@ -170,6 +172,15 @@ NODE_METHOD(Database::JS_new) {
 	int status = sqlite3_db_config(db_handle, SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION, 1, NULL);
 	assert(status == SQLITE_OK); ((void)status);
 	status = sqlite3_db_config(db_handle, SQLITE_DBCONFIG_DEFENSIVE, 1, NULL);
+	assert(status == SQLITE_OK); ((void)status);
+	// better-sqlite3 compiles SQLite with foreign keys on (SQLITE_DEFAULT_FOREIGN_KEYS=1)
+	// and without double-quoted string literals (SQLITE_DQS=0). PotluckDB's library
+	// keeps SQLite's defaults, so set the same behaviour on each connection.
+	status = sqlite3_db_config(db_handle, SQLITE_DBCONFIG_ENABLE_FKEY, 1, NULL);
+	assert(status == SQLITE_OK); ((void)status);
+	status = sqlite3_db_config(db_handle, SQLITE_DBCONFIG_DQS_DML, 0, NULL);
+	assert(status == SQLITE_OK); ((void)status);
+	status = sqlite3_db_config(db_handle, SQLITE_DBCONFIG_DQS_DDL, 0, NULL);
 	assert(status == SQLITE_OK); ((void)status);
 
 	if (buffer.IsBuffer() && !Deserialize(env, buffer.As<Napi::Object>(), addon, db_handle, readonly)) {

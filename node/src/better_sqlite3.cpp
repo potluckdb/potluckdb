@@ -1,3 +1,7 @@
+// PotluckDB's Node.js addon: better-sqlite3 13.0.3's Node-API addon
+// (MIT, Copyright (c) 2017 Joshua Wise; see THIRD_PARTY_NOTICES.md), built
+// against PotluckDB's own SQLite library, which is linked in statically.
+
 #include <cassert>
 #include <climits>
 #include <cmath>
@@ -11,6 +15,7 @@
 #include <algorithm>
 #include <mutex>
 #include <sqlite3.h>
+#include <potluckdb.h>
 #include <napi.h>
 
 struct Addon;
@@ -21,6 +26,7 @@ class Backup;
 
 #include "util/macros.cpp"
 #include "util/helpers.cpp"
+#include "util/napi-compat.cpp"
 #include "util/constants.cpp"
 #include "util/bind-map.cpp"
 #include "util/data-converter.cpp"
@@ -61,6 +67,7 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
 	exports.Set("StatementIterator", StatementIterator::Init(env, addon));
 	exports.Set("Backup", Backup::Init(env, addon));
 	exports.Set("initialize", Napi::Function::New(env, Addon::JS_initialize, "initialize", addon));
+	exports.Set("coreVersion", Napi::String::New(env, potluckdb_version()));
 
 	// Store addon instance data.
 	addon->Statement = Napi::Persistent(exports.Get("Statement").As<Napi::Function>());
@@ -70,4 +77,4 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
 	return exports;
 }
 
-NODE_API_MODULE(better_sqlite3, InitAll)
+NODE_API_MODULE(potluckdb, InitAll)

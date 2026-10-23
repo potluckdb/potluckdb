@@ -16,7 +16,7 @@ public:
 		invoke_start(start.IsFunction()),
 		inverse(inverse.IsFunction() ? Napi::Persistent(inverse.As<Napi::Function>()) : Napi::FunctionReference()),
 		result(result.IsFunction() ? Napi::Persistent(result.As<Napi::Function>()) : Napi::FunctionReference()),
-		start(Napi::Persistent(start)) {}
+		start(MakeValueReference(start)) {}
 
 	static void xStep(sqlite3_context* invocation, int argc, sqlite3_value** argv) {
 		xStepBase(invocation, argc, argv, &CustomAggregate::fn);
@@ -80,7 +80,7 @@ private:
 	}
 
 	struct Accumulator { public:
-		Napi::Reference<Napi::Value> value;
+		ValueReference value;
 		bool initialized;
 		bool is_window;
 	};
@@ -117,5 +117,5 @@ private:
 	const bool invoke_start;
 	const Napi::FunctionReference inverse;
 	const Napi::FunctionReference result;
-	const Napi::Reference<Napi::Value> start;
+	const ValueReference start;
 };

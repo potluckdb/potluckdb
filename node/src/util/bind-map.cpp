@@ -10,6 +10,7 @@ public:
 				return index;
 			}
 
+#if NAPI_VERSION >= 10
 			inline Napi::String GetName(Napi::Env env) {
 				return name.Value();
 			}
@@ -23,6 +24,23 @@ public:
 				: name(Napi::Persistent(pair->name.Value())), index(pair->index) {}
 
 			const Napi::Reference<Napi::String> name;
+#else
+			// Before Node-API version 10, references cannot hold strings, so
+			// the name is kept as UTF-8 (see napi-compat.cpp).
+			inline Napi::String GetName(Napi::Env env) {
+				return InternalizedFromUtf8(env, name.c_str(), static_cast<int>(name.size()));
+			}
+
+		private:
+
+			explicit Pair(Napi::Env env, const char* name, int index)
+				: name(name), index(index) {}
+
+			explicit Pair(Napi::Env env, Pair* pair)
+				: name(pair->name), index(pair->index) {}
+
+			const std::string name;
+#endif
 			const int index;
 	};
 

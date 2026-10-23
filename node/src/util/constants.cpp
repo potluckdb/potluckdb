@@ -1,5 +1,5 @@
 // Caches JavaScript strings that are used frequently as property keys or
-// error codes. Persistent references to strings require Node-API version 10.
+// error codes (see StringConstant in napi-compat.cpp).
 class CS {
 public:
 
@@ -139,34 +139,34 @@ public:
 		SetCode(env, SQLITE_OK_SYMLINK, "SQLITE_OK_SYMLINK");
 	}
 
-	Napi::Reference<Napi::String> database;
-	Napi::Reference<Napi::String> reader;
-	Napi::Reference<Napi::String> source;
-	Napi::Reference<Napi::String> memory;
-	Napi::Reference<Napi::String> readonly;
-	Napi::Reference<Napi::String> name;
-	Napi::Reference<Napi::String> next;
-	Napi::Reference<Napi::String> length;
-	Napi::Reference<Napi::String> done;
-	Napi::Reference<Napi::String> value;
-	Napi::Reference<Napi::String> changes;
-	Napi::Reference<Napi::String> lastInsertRowid;
-	Napi::Reference<Napi::String> statement;
-	Napi::Reference<Napi::String> column;
-	Napi::Reference<Napi::String> table;
-	Napi::Reference<Napi::String> type;
-	Napi::Reference<Napi::String> totalPages;
-	Napi::Reference<Napi::String> remainingPages;
+	StringConstant database;
+	StringConstant reader;
+	StringConstant source;
+	StringConstant memory;
+	StringConstant readonly;
+	StringConstant name;
+	StringConstant next;
+	StringConstant length;
+	StringConstant done;
+	StringConstant value;
+	StringConstant changes;
+	StringConstant lastInsertRowid;
+	StringConstant statement;
+	StringConstant column;
+	StringConstant table;
+	StringConstant type;
+	StringConstant totalPages;
+	StringConstant remainingPages;
 
 private:
 
-	static void SetString(Napi::Env env, Napi::Reference<Napi::String>& constant, const char* str) {
-		constant = Napi::Persistent(InternalizedFromLatin1(env, str));
+	static void SetString(Napi::Env env, StringConstant& constant, const char* str) {
+		constant = MakeStringConstant(env, str);
 	}
 
 	void SetCode(Napi::Env env, int code, const char* str) {
-		codes.emplace(code, Napi::Persistent(InternalizedFromLatin1(env, str)));
+		codes.emplace(code, MakeStringConstant(env, str));
 	}
 
-	std::unordered_map<int, Napi::Reference<Napi::String>> codes;
+	std::unordered_map<int, StringConstant> codes;
 };

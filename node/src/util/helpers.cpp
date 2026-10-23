@@ -31,7 +31,8 @@ inline bool IsInt32(Napi::Value value) {
 	return static_cast<double>(static_cast<int32_t>(num)) == num;
 }
 
-inline void SetFrozen(Napi::Env env, Napi::Object obj, const Napi::Reference<Napi::String>& key, Napi::Value value) {
+// The key is a StringConstant (see napi-compat.cpp).
+template <class Key> inline void SetFrozen(Napi::Env env, Napi::Object obj, const Key& key, Napi::Value value) {
 	obj.DefineProperty(Napi::PropertyDescriptor::Value(key.Value(), value, napi_enumerable));
 }
 
