@@ -59,13 +59,14 @@ def host_target():
     """The core target for the platform being built for."""
     if os.environ.get("POTLUCKDB_CORE_TARGET"):
         return os.environ["POTLUCKDB_CORE_TARGET"]
-    plat = sysconfig.get_platform()  # honours cross-compile settings (e.g. macOS ARCHFLAGS)
+    plat = sysconfig.get_platform()  # honours _PYTHON_HOST_PLATFORM (cross-compiling)
     if plat.startswith("macosx-"):
         arch = plat.rsplit("-", 1)[1]
-        if os.environ.get("ARCHFLAGS"):
-            archs = os.environ["ARCHFLAGS"].split()[1::2]
-            if len(archs) == 1:
-                arch = archs[0]
+        archs = os.environ.get("ARCHFLAGS", "").split()[1::2]
+        if len(archs) == 1:
+            arch = archs[0]
+        elif arch in ("universal2", "intel", "fat", "fat3", "fat64", "universal"):
+            arch = platform.machine()  # see setup.py: one architecture per build
         return {"arm64": "macos-arm64", "x86_64": "macos-x64"}.get(arch) or _unsupported(plat)
     if plat.startswith("win"):
         return {"win-amd64": "windows-x64", "win-arm64": "windows-arm64"}.get(plat) or _unsupported(plat)

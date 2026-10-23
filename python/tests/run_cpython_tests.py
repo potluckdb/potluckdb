@@ -84,11 +84,30 @@ sys.modules["_sqlite3"] = potluckdb._sqlite3
 '''
 
 
+TESTCAPI_STUB = '''\
+"""The constants of CPython's _testcapi that the sqlite3 tests use, for
+Pythons built without the test C API (python-build-standalone, some
+installers). The 3.11 and 3.12 suites import them at module level."""
+import sys
+INT_MAX = 2**31 - 1
+INT_MIN = -2**31
+UINT_MAX = 2**32 - 1
+LLONG_MAX = 2**63 - 1
+LLONG_MIN = -2**63
+ULLONG_MAX = 2**64 - 1
+PY_SSIZE_T_MAX = sys.maxsize
+PY_SSIZE_T_MIN = -sys.maxsize - 1
+'''
+
+
 def make_alias(directory):
     """A directory that, first on sys.path, makes `import sqlite3` give potluckdb."""
     (directory / "sqlite3").mkdir(parents=True)
     (directory / "sqlite3" / "__init__.py").write_text(ALIAS_SQLITE3)
     (directory / "_sqlite3.py").write_text(ALIAS_SQLITE3_EXT)
+    import importlib.util
+    if importlib.util.find_spec("_testcapi") is None:
+        (directory / "_testcapi.py").write_text(TESTCAPI_STUB)
 
 
 # --- known failures -------------------------------------------------------

@@ -205,6 +205,33 @@ int64_converter(PyObject *value, sqlite3_int64 *result)
     return !(*result == -1 && PyErr_Occurred());
 }
 
+/* The statement cache is functools.lru_cache(maxsize)(factory), where
+ * factory(sql) prepares a statement on this connection. The factory holds a
+ * borrowed pointer to the connection, which owns the cache, so the cache
+ * makes no reference cycle: a connection nobody refers to any more is closed
+ * at once (as with Python 3.10's sqlite3), not at the next garbage collection.
+ */
+typedef struct {
+    PyObject_HEAD
+    pysqlite_Connection *connection;  /* borrowed: it owns the cache */
+} statement_factory;
+
+static PyObject *connection_call(pysqlite_Connection *self, PyObject *args, PyObject *kwargs);
+
+static PyObject *
+statement_factory_call(statement_factory *self, PyObject *args, PyObject *kwargs)
+{
+    return connection_call(self->connection, args, kwargs);
+}
+
+static PyTypeObject statement_factory_type = {
+    PyVarObject_HEAD_INIT(NULL, 0)
+    .tp_name = MODULE_NAME ".StatementFactory",
+    .tp_basicsize = sizeof(statement_factory),
+    .tp_call = (ternaryfunc)statement_factory_call,
+    .tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_DISALLOW_INSTANTIATION,
+};
+
 static PyObject *
 new_statement_cache(pysqlite_Connection *self, int maxsize)
 {
@@ -217,7 +244,14 @@ new_statement_cache(pysqlite_Connection *self, int maxsize)
     if (decorator == NULL) {
         return NULL;
     }
-    PyObject *cache = PyObject_CallOneArg(decorator, (PyObject *)self);
+    statement_factory *factory = PyObject_New(statement_factory, &statement_factory_type);
+    if (factory == NULL) {
+        Py_DECREF(decorator);
+        return NULL;
+    }
+    factory->connection = self;
+    PyObject *cache = PyObject_CallOneArg(decorator, (PyObject *)factory);
+    Py_DECREF(factory);
     Py_DECREF(decorator);
     return cache;
 }
@@ -988,16 +1022,17 @@ value_callback(sqlite3_context *context)
 static int
 check_num_params(pysqlite_Connection *self, int n, const char *name)
 {
-#if !PYSQLITE_PY314
-    /* Before Python 3.14, SQLite rejects it ("Error creating function"). */
-    return 0;
-#endif
+#if PYSQLITE_PY314
     int limit = sqlite3_limit(self->db, SQLITE_LIMIT_FUNCTION_ARG, -1);
     if (n < -1 || n > limit) {
         PyErr_Format(self->ProgrammingError, "'%s' must be between -1 and %d, not %d",
                      name, limit, n);
         return -1;
     }
+#else
+    /* Before Python 3.14, SQLite rejects it ("Error creating function"). */
+    (void)self, (void)n, (void)name;
+#endif
     return 0;
 }
 
@@ -2147,5 +2182,8 @@ PyTypeObject pysqlite_ConnectionType = {
 int
 pysqlite_connection_setup_types(void)
 {
+    if (PyType_Ready(&statement_factory_type) < 0) {
+        return -1;
+    }
     return PyType_Ready(&pysqlite_ConnectionType);
 }

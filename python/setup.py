@@ -67,6 +67,25 @@ class BuildExt(build_ext):
         super().build_extensions()
 
 
+def single_arch_on_universal_python():
+    """The library is built per architecture. With a universal2 Python (such
+    as python.org's macOS installers) build for this machine only, and tag
+    the wheel accordingly, unless ARCHFLAGS or _PYTHON_HOST_PLATFORM say
+    otherwise (cibuildwheel sets both)."""
+    import sysconfig
+    import platform
+    plat = sysconfig.get_platform()
+    if (plat.startswith("macosx-") and plat.endswith("-universal2")
+            and not os.environ.get("ARCHFLAGS") and not os.environ.get("_PYTHON_HOST_PLATFORM")):
+        arch = platform.machine()
+        target = os.environ.get("MACOSX_DEPLOYMENT_TARGET", "11.0")
+        os.environ["ARCHFLAGS"] = f"-arch {arch}"
+        os.environ["_PYTHON_HOST_PLATFORM"] = f"macosx-{target}-{arch}"
+
+
+single_arch_on_universal_python()
+
+
 def package_version(core=None):
     if os.environ.get("POTLUCKDB_PACKAGE_VERSION"):
         return os.environ["POTLUCKDB_PACKAGE_VERSION"]
