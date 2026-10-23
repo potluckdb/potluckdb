@@ -50,7 +50,10 @@ def frameworks():
 def own_tests(target, version, sqlite_version):
     project = HERE / "PotluckDB.Tests"
     for framework in frameworks():
-        run([DOTNET, "build", str(project), "-c", "Release", "-f", framework, "--nologo", "-v", "quiet"])
+        # The version of the packages just made: Directory.Build.props names
+        # the last release, which nuget.org may have too.
+        run([DOTNET, "build", str(project), "-c", "Release", "-f", framework, f"-p:PotluckDBVersion={version}",
+             "--nologo", "-v", "quiet"])
         dll = project / "bin" / "Release" / framework / "PotluckDB.Tests.dll"
         for scenario in SCENARIOS:
             run([DOTNET, str(dll), scenario, version, sqlite_version])
@@ -61,15 +64,15 @@ def own_tests(target, version, sqlite_version):
             run([DOTNET, str(dll), "api", version, sqlite_version], env={"LD_PRELOAD": system})
 
 
-def microsoft_data_sqlite_tests(target):
+def microsoft_data_sqlite_tests(target, version):
     project = HERE / "Microsoft.Data.Sqlite.Tests"
     known = json.loads((project / "known-failures.json").read_text(encoding="utf-8"))
     expected = {f["test"]: f["reason"] for f in known["failures"]
                 if not f.get("platforms") or target in f["platforms"]}
     results_dir = ROOT / "artifacts" / "test-results"
     shutil.rmtree(results_dir, ignore_errors=True)
-    command = [DOTNET, "test", str(project), "-c", "Release", "--nologo", "--logger", "trx;LogFileName=mds.trx",
-               "--results-directory", str(results_dir)]
+    command = [DOTNET, "test", str(project), "-c", "Release", f"-p:PotluckDBVersion={version}", "--nologo",
+               "--logger", "trx;LogFileName=mds.trx", "--results-directory", str(results_dir)]
     print(f"$ {' '.join(command)}", flush=True)
     subprocess.run(command)  # failures are judged below, against the known ones
     trx = results_dir / "mds.trx"
@@ -108,7 +111,7 @@ def main():
     for obj in HERE.glob("*/obj"):
         shutil.rmtree(obj)
     own_tests(args.target, info["potluckdb_version"], info["sqlite_version"])
-    microsoft_data_sqlite_tests(args.target)
+    microsoft_data_sqlite_tests(args.target, info["potluckdb_version"])
     print("tests ok")
 
 
