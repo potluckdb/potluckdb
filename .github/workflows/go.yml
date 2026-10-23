@@ -1,0 +1,289 @@
+# The Go package (go/): tests the driver against a PotluckDB release on
+# each platform, and writes the content of the distribution repository,
+# github.com/potluckdb/potluckdb-go, for that release.
+#
+# - Changes under go/: the tools' own tests, and every check on Linux x64.
+# - Nightly, by hand, or called from another workflow: all 8 platforms.
+# - Every run against a release: the distribution repository's content,
+#   as the artifact potluckdb-go-<version>.
+# - publish: also push that content to potluckdb-go and tag its modules.
+#   It needs the deploy key GO_DIST_DEPLOY_KEY in the environment "go" (see
+#   go/DESIGN.md); release.yml starts it when the repository variable
+#   GO_PUBLISHING is true.
+#
+# The checks run against a release's core archives, so nothing runs before
+# the first release exists; the run then passes with a notice.
+name: go
+
+on:
+  pull_request:
+    paths: ["go/**", ".github/workflows/go.yml"]
+  push:
+    branches: [main]
+    paths: ["go/**", ".github/workflows/go.yml"]
+  schedule:
+    - cron: "37 3 * * *"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "PotluckDB version, e.g. 0.8.0-dev.1 (default: the latest release)"
+        required: false
+      publish:
+        description: "Push the Go modules for this version to potluckdb-go"
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      version:
+        description: "PotluckDB version, e.g. 0.8.0-dev.1"
+        type: string
+        required: true
+      publish:
+        description: "Push the Go modules for this version to potluckdb-go"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: go-${{ github.ref }}-${{ inputs.version }}-${{ inputs.publish }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  GO_VERSION: "1.27.2"
+
+jobs:
+  # The generator's tests, with made-up archives; needs no release.
+  tools:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: go
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l tools sqlite3 test)
+          if [ -n "$unformatted" ]; then echo "::error::not gofmt-ed: $unformatted"; exit 1; fi
+      - run: go vet ./tools
+      - run: go test -count=1 ./tools
+
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - name: Find the PotluckDB release to test against
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          PUBLISH: ${{ inputs.publish }}
+        run: |
+          if [ -z "$VERSION" ]; then
+            VERSION=$(gh release list -R "$GITHUB_REPOSITORY" --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName // ""')
+            VERSION=${VERSION#v}
+          fi
+          if [ -n "$VERSION" ] && gh release view "v$VERSION" -R "$GITHUB_REPOSITORY" --json tagName > /dev/null 2>&1; then
+            echo "Testing against PotluckDB $VERSION"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          elif [ "$PUBLISH" = true ]; then
+            echo "::error::potluckdb/potluckdb has no release v$VERSION, so there is nothing to publish."
+            exit 1
+          else
+            echo "::notice title=Go package not tested::potluckdb/potluckdb has no release${VERSION:+ v$VERSION} yet, so there is no PotluckDB library to test the Go package with. Its checks are skipped and run once the first release (0.8.0-dev.1) is out."
+          fi
+      - name: Choose the platforms
+        id: matrix
+        if: steps.release.outputs.version
+        env:
+          ALL: ${{ github.event_name != 'pull_request' && github.event_name != 'push' }}
+          # Linux runs in the oldest systems the libraries support: AlmaLinux 8
+          # (glibc 2.28, gcc 8) and Alpine (musl). Changes under go/ run on the
+          # runner itself, as most users' machines are set up.
+          PLATFORMS: >-
+            [
+              {"target": "linux-x64-gnu", "os": "ubuntu-24.04", "container": "glibc",
+               "image": "almalinux:8@sha256:8b469a3a78515e8a18ea8fc727e6a3679e1d0c5ba6f58d5b30be3d0d9b86cffe"},
+              {"target": "linux-arm64-gnu", "os": "ubuntu-24.04-arm", "container": "glibc",
+               "image": "almalinux:8@sha256:8b469a3a78515e8a18ea8fc727e6a3679e1d0c5ba6f58d5b30be3d0d9b86cffe"},
+              {"target": "linux-x64-musl", "os": "ubuntu-24.04", "container": "musl",
+               "image": "alpine:3.22.6@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8"},
+              {"target": "linux-arm64-musl", "os": "ubuntu-24.04-arm", "container": "musl",
+               "image": "alpine:3.22.6@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8"},
+              {"target": "macos-arm64", "os": "macos-15"},
+              {"target": "macos-x64", "os": "macos-15-intel"},
+              {"target": "windows-x64", "os": "windows-2025", "mingw": "x86_64",
+               "mingw_sha256": "e3ad77d117a4bea19a7a3b333341824d79a5a371004a10e25b8504e7b3047666"},
+              {"target": "windows-arm64", "os": "windows-11-arm", "mingw": "aarch64",
+               "mingw_sha256": "a317514a7a63badd692032c0c2b8e165f630bbaebbe7a3254348051f43a64949"}
+            ]
+        run: |
+          if [ "$ALL" = true ]; then
+            echo "matrix=$(jq -c . <<< "$PLATFORMS")" >> "$GITHUB_OUTPUT"
+          else
+            echo "matrix=$(jq -c '[.[] | select(.target == "linux-x64-gnu") | del(.container, .image)]' <<< "$PLATFORMS")" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Every check for one platform (go run ./tools test, see go/tools/e2e.go):
+  # the quickstart after go get, a fresh module cache, -trimpath, vendoring,
+  # the replace line, CGO_ENABLED=0, the program's SQLite, and go-sqlite3's
+  # own tests.
+  test:
+    needs: plan
+    if: needs.plan.outputs.version
+    name: test ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix || '[]') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: go
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: Download the PotluckDB libraries
+        # All of them: the driver's go.mod needs every platform's module.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "v$VERSION" -R "$GITHUB_REPOSITORY" -D ../core -p "potluckdb-sqlite-$VERSION-*" -p SHA256SUMS
+          ls -l ../core
+      - name: Does the release have a library MinGW can link?
+        id: mingw
+        if: matrix.mingw
+        run: |
+          if python -c "import sys, zipfile; sys.exit(not any(n.endswith('/lib/static/libsqlite3.a') for n in zipfile.ZipFile(sys.argv[1]).namelist()))" \
+              "../core/potluckdb-sqlite-$VERSION-${{ matrix.target }}.zip"; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice title=No Go module for ${{ matrix.target }}::PotluckDB $VERSION has only an MSVC static library for ${{ matrix.target }}, which MinGW cannot link (see go/DESIGN.md), so the Go package has no module for it. Its checks are skipped."
+          fi
+      - name: MinGW toolchain (llvm-mingw 20260922)
+        if: steps.mingw.outputs.available
+        env:
+          NAME: llvm-mingw-20260922-ucrt-${{ matrix.mingw }}
+          SHA256: ${{ matrix.mingw_sha256 }}
+        run: |
+          curl -sSfLo "$RUNNER_TEMP/llvm-mingw.zip" "https://github.com/mstorsjo/llvm-mingw/releases/download/20260922/$NAME.zip"
+          echo "$SHA256  $RUNNER_TEMP/llvm-mingw.zip" | sha256sum --check --strict
+          python -m zipfile -e "$RUNNER_TEMP/llvm-mingw.zip" "$RUNNER_TEMP"
+          cygpath -w "$RUNNER_TEMP/$NAME/bin" >> "$GITHUB_PATH"
+          echo "CC=clang" >> "$GITHUB_ENV"
+      - name: Test (${{ matrix.target }})
+        if: ${{ !matrix.container && (!matrix.mingw || steps.mingw.outputs.available) }}
+        env:
+          POTLUCKDB_CORE_DIR: ${{ github.workspace }}/core
+        run: |
+          go version
+          go env CC
+          go run ./tools test -version "$VERSION" -target ${{ matrix.target }} -work "$RUNNER_TEMP/work"
+      - name: Test (${{ matrix.target }}, glibc 2.28, in AlmaLinux 8)
+        if: matrix.container == 'glibc'
+        run: |
+          docker run --rm -e VERSION -v "$(go env GOROOT):/opt/go:ro" -v "$GITHUB_WORKSPACE:/src:ro" "${{ matrix.image }}" \
+            bash -euc 'dnf -q -y install gcc > /dev/null; export PATH=/opt/go/bin:$PATH HOME=/tmp GOCACHE=/tmp/gocache
+              mkdir /tmp/src && cp -r /src/go /src/LICENSE /tmp/src/ && cd /tmp/src/go
+              go version; gcc --version | head -1; ldd --version | head -1
+              go run ./tools test -version "$VERSION" -core /src/core -target ${{ matrix.target }} -work /tmp/work'
+      - name: Test (${{ matrix.target }}, in Alpine)
+        if: matrix.container == 'musl'
+        run: |
+          docker run --rm -e VERSION -v "$(go env GOROOT):/opt/go:ro" -v "$GITHUB_WORKSPACE:/src:ro" "${{ matrix.image }}" \
+            sh -euc 'apk add -q gcc musl-dev > /dev/null; export PATH=/opt/go/bin:$PATH HOME=/tmp GOCACHE=/tmp/gocache
+              mkdir /tmp/src && cp -r /src/go /src/LICENSE /tmp/src/ && cd /tmp/src/go
+              go version; gcc --version | head -1
+              go run ./tools test -version "$VERSION" -core /src/core -target ${{ matrix.target }} -work /tmp/work'
+
+  # The distribution repository's content for the release: what publish
+  # pushes to potluckdb-go.
+  dist:
+    needs: [plan, test]
+    if: needs.plan.outputs.version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    defaults:
+      run:
+        working-directory: go
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: Write the distribution repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "v$VERSION" -R "$GITHUB_REPOSITORY" -D ../core -p "potluckdb-sqlite-$VERSION-*" -p SHA256SUMS
+          POTLUCKDB_CORE_DIR=../core go run ./tools dist -version "$VERSION" -out "$RUNNER_TEMP/potluckdb-go"
+          {
+            echo "### potluckdb-go for PotluckDB $VERSION"
+            echo
+            echo "Tags that publish creates:"
+            echo
+            (cd "$RUNNER_TEMP/potluckdb-go" && find . -name go.mod | sed 's|^\./||; s|/go.mod$||' | sort | sed "s|.*|- \`&/v$VERSION\`|")
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: potluckdb-go-${{ needs.plan.outputs.version }}
+          path: ${{ runner.temp }}/potluckdb-go/
+          include-hidden-files: true
+          if-no-files-found: error
+
+  # Pushes the content to github.com/potluckdb/potluckdb-go as one commit on
+  # main and tags every module (<folder>/v<version>). Go module versions can
+  # never change once fetched, so an existing tag is never moved.
+  publish:
+    needs: [plan, test, dist]
+    if: inputs.publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: go
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: potluckdb-go-${{ needs.plan.outputs.version }}
+          path: tree
+      - name: Push to potluckdb-go
+        env:
+          DEPLOY_KEY: ${{ secrets.GO_DIST_DEPLOY_KEY }}
+        run: |
+          if [ -z "$DEPLOY_KEY" ]; then
+            echo "::error::The environment \"go\" has no secret GO_DIST_DEPLOY_KEY (a deploy key with write access to potluckdb/potluckdb-go)."
+            exit 1
+          fi
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/potluckdb-go && chmod 600 ~/.ssh/potluckdb-go
+          curl -sSf https://api.github.com/meta | jq -r '.ssh_keys[] | "github.com " + .' > ~/.ssh/known_hosts
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/potluckdb-go -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
+          bash go/scripts/publish.sh tree "$VERSION" git@github.com:potluckdb/potluckdb-go.git
+      - name: Ask the Go module proxy for the new versions
+        # So the first `go get` does not wait for proxy.golang.org to fetch them.
+        run: |
+          cd tree
+          for mod in $(find . -name go.mod | sed 's|^\./||; s|/go.mod$||' | sort); do
+            curl -sSf "https://proxy.golang.org/github.com/potluckdb/potluckdb-go/$mod/@v/v$VERSION.info" && echo
+          done

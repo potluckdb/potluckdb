@@ -1,0 +1,6 @@
+# go-sqlite3's tests that PotluckDB does not run, where, and why. go run
+# ./tools test skips them (go test -skip); every other test must pass.
+#
+# <test>  <where: all, musl or a target>  <why>
+
+TestRowsContextPanicClearsActiveRows  musl  The test panics inside an SQL function. The panic unwinds through sqlite3_step and leaves the connection's lock held when the connection is freed; musl keeps every held lock in a per-thread list, so later locking writes into freed memory and later tests in the same process fail or crash (TestFTS4, TestExecContextCancel). go-sqlite3's own build crashes the same way on musl. The test passes by itself.
