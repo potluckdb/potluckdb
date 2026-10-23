@@ -84,7 +84,7 @@ jobs:
         id: matrix
         if: steps.release.outputs.version
         env:
-          ALL: true # TEMPORARY: all 8 platforms on this PR; reverted before merge
+          ALL: ${{ github.event_name != 'pull_request' && github.event_name != 'push' }}
           # glibc builds run in AlmaLinux 8 (glibc 2.28, the oldest the library
           # supports) with the runner's Rust; musl builds natively in Alpine.
           PLATFORMS: >-
