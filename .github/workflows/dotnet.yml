@@ -88,7 +88,7 @@ jobs:
         id: matrix
         if: steps.release.outputs.version
         env:
-          ALL: ${{ github.event_name != 'pull_request' && github.event_name != 'push' }}
+          ALL: true # TEMPORARY: all platforms on this pull request; reverted before merging
           # glibc builds run in manylinux_2_28 (the oldest glibc they support),
           # with the images node.yml uses.
           PLATFORMS: >-
