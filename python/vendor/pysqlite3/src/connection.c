@@ -206,14 +206,14 @@ int64_converter(PyObject *value, sqlite3_int64 *result)
 }
 
 /* The statement cache is functools.lru_cache(maxsize)(factory), where
- * factory(sql) prepares a statement on this connection. The factory holds a
- * borrowed pointer to the connection, which owns the cache, so the cache
- * makes no reference cycle: a connection nobody refers to any more is closed
- * at once (as with Python 3.10's sqlite3), not at the next garbage collection.
+ * factory(sql) prepares a statement on this connection. The factory refers to
+ * the connection (which owns the cache) only weakly, so the cache makes no
+ * reference cycle: a connection nobody refers to any more is closed at once
+ * (as with Python 3.10's sqlite3), not at the next garbage collection.
  */
 typedef struct {
     PyObject_HEAD
-    pysqlite_Connection *connection;  /* borrowed: it owns the cache */
+    PyObject *connection;  /* weak reference */
 } statement_factory;
 
 static PyObject *connection_call(pysqlite_Connection *self, PyObject *args, PyObject *kwargs);
@@ -221,13 +221,33 @@ static PyObject *connection_call(pysqlite_Connection *self, PyObject *args, PyOb
 static PyObject *
 statement_factory_call(statement_factory *self, PyObject *args, PyObject *kwargs)
 {
-    return connection_call(self->connection, args, kwargs);
+    PyObject *connection;
+    int alive = pysqlite_weakref_get_ref(self->connection, &connection);
+    if (alive < 0) {
+        return NULL;
+    }
+    if (alive == 0) {
+        PyErr_SetString(pysqlite_get_state()->ProgrammingError,
+                        "Cannot operate on a closed database.");
+        return NULL;
+    }
+    PyObject *statement = connection_call((pysqlite_Connection *)connection, args, kwargs);
+    Py_DECREF(connection);
+    return statement;
+}
+
+static void
+statement_factory_dealloc(statement_factory *self)
+{
+    Py_XDECREF(self->connection);
+    Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
 static PyTypeObject statement_factory_type = {
     PyVarObject_HEAD_INIT(NULL, 0)
     .tp_name = MODULE_NAME ".StatementFactory",
     .tp_basicsize = sizeof(statement_factory),
+    .tp_dealloc = (destructor)statement_factory_dealloc,
     .tp_call = (ternaryfunc)statement_factory_call,
     .tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_DISALLOW_INSTANTIATION,
 };
@@ -249,7 +269,12 @@ new_statement_cache(pysqlite_Connection *self, int maxsize)
         Py_DECREF(decorator);
         return NULL;
     }
-    factory->connection = self;
+    factory->connection = PyWeakref_NewRef((PyObject *)self, NULL);
+    if (factory->connection == NULL) {
+        Py_DECREF(factory);
+        Py_DECREF(decorator);
+        return NULL;
+    }
     PyObject *cache = PyObject_CallOneArg(decorator, (PyObject *)factory);
     Py_DECREF(factory);
     Py_DECREF(decorator);
