@@ -12,7 +12,7 @@ says what each one does.
 | Step | Version | What works |
 | --- | --- | --- |
 | Drop-in library | 0.8.0 | Our build of SQLite on every desktop platform, then packages for each language, mobile and the browser |
-| Files sync | 0.8.1 | Two devices sync a folder of files through a bucket, and restore any version |
+| Files sync | 0.8.1 | Two devices sync a folder of files through a bucket, and restore any version ([try it](/guides/sync-a-folder/)) |
 | SQLite, one writer | 0.8.2 | A database syncs from one device to many |
 | SQLite, many writers | 0.8.3 | Every device writes; conflicts resolve by themselves |
 | All platforms | 0.8.4 | Sync on iOS, Android, the browser and in every language |
