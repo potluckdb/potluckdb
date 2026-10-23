@@ -1,0 +1,22 @@
+# Tests of CPython's sqlite3 suite that fail against potluckdb, and why.
+#
+# run_cpython_tests.py fails on any failing test not listed here. A listed
+# test that passes is reported so it can be removed.
+#
+# Format, one per line:   <test id>  [conditions]  # reason
+#   test id      module.Class.method, e.g. test_dbapi.CursorTests.test_close
+#                (3.10's modules are named without "test_"; the id adds it)
+#   conditions   optional; Python versions ("3.10", "3.11+", "3.10-3.12") and
+#                platforms (linux, macos, windows); none means everywhere
+
+# Python 3.10 read the first row inside execute() and stepped one row ahead.
+# Since 3.11, CPython (and potluckdb) read rows when they are fetched, so a
+# converter that misuses its own cursor fails in fetchone(), not execute().
+test_regression.RecursiveUseOfCursors.test_recursive_cursor_close  [3.10]  # 3.10 fetches the first row in execute(); potluckdb fetches as rows are read (3.11+)
+test_regression.RecursiveUseOfCursors.test_recursive_cursor_init  [3.10]  # 3.10 fetches the first row in execute(); potluckdb fetches as rows are read (3.11+)
+
+# Python 3.10 made every cursor unusable after Connection.rollback()
+# (InterfaceError "Cursor needed to be reset ..."). CPython removed this in
+# 3.11 (bpo-44092) and leaves rollback effects to SQLite; potluckdb does too.
+test_regression.RegressionTests.test_cursor_registration  [3.10]  # no cursor reset after rollback (removed in CPython 3.11, bpo-44092)
+test_transactions.TransactionTests.test_rollback_cursor_consistency  [3.10]  # no cursor reset after rollback (removed in CPython 3.11, bpo-44092)

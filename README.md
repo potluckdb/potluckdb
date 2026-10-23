@@ -48,6 +48,7 @@ See [Sync a folder](docs/src/content/docs/guides/sync-a-folder.md).
 | `tests/` | Tests of the tooling, and the release checks run on every platform, including the frozen math vectors (`tests/vectors`): the exact bits SQL math must give everywhere |
 | `docs/` | The docs site, docs.potluckdb.com ([Starlight](https://starlight.astro.build/)) |
 | `node/` | The Node.js package, `potluckdb` on npm: a drop-in replacement for better-sqlite3 |
+| `python/` | The Python package, `potluckdb` on PyPI: a drop-in replacement for the `sqlite3` module |
 
 Language add-ons, docs and examples arrive here during the 0.8 series. The
 sync engine itself is built in a private repository; its binaries are

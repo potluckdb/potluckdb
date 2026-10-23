@@ -1,0 +1,15 @@
+PotluckDB binary licence
+
+Copyright (c) 2026 Sharif Ismail. All rights reserved.
+
+This archive contains a build of the PotluckDB library. Pre-release builds
+(versions marked -dev or -rc) may be used for evaluation and development.
+Terms for production use will be published at https://potluckdb.com before
+version 1.0.
+
+The SQLite source code compiled into this library is in the public domain;
+see THIRD_PARTY_NOTICES.txt.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED. IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+OTHER LIABILITY ARISING FROM THE USE OF THE SOFTWARE.
