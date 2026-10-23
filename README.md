@@ -28,6 +28,16 @@ LD_LIBRARY_PATH=$PWD/potluckdb-sqlite-<version>-linux-x64-gnu/lib \
 
 Each release lists how to check its files (`SHA256SUMS` and Sigstore signatures).
 
+To try sync already, the `potluckdb` command (archives named
+`potluckdb-cli-<version>-<platform>`) keeps a folder the same on several
+devices through a bucket you own, with 7 days of history:
+
+```sh
+potluckdb sync ~/notes s3://my-bucket/notes
+```
+
+See [Sync a folder](docs/src/content/docs/guides/sync-a-folder.md).
+
 ## This repository
 
 | Path | What |
@@ -35,6 +45,7 @@ Each release lists how to check its files (`SHA256SUMS` and Sigstore signatures)
 | `CHANGELOG.md` | Release notes for every version |
 | `changes/` | Notes for changes not released yet |
 | `tools/` | Release tooling |
+| `tests/` | Tests of the tooling, and the release checks run on every platform |
 | `docs/` | The docs site, docs.potluckdb.com ([Starlight](https://starlight.astro.build/)) |
 | `node/` | The Node.js package, `potluckdb` on npm: a drop-in replacement for better-sqlite3 |
 
