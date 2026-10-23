@@ -78,9 +78,10 @@ jobs:
         shell: bash
         env:
           PYTHON: ${{ runner.os == 'Windows' && 'python' || 'python3' }}
+          EXT: ${{ runner.os == 'Windows' && 'zip' || 'tar.gz' }}
         run: |
-          $PYTHON tests/release/smoke.py dist/potluckdb-sqlite-"$VERSION"-${{ matrix.target }}.* "$VERSION"
-          $PYTHON tests/release/cli_smoke.py dist/potluckdb-cli-"$VERSION"-${{ matrix.target }}.* "$VERSION"
+          $PYTHON tests/release/smoke.py dist/potluckdb-sqlite-"$VERSION"-${{ matrix.target }}.$EXT "$VERSION"
+          $PYTHON tests/release/cli_smoke.py dist/potluckdb-cli-"$VERSION"-${{ matrix.target }}.$EXT "$VERSION"
       - name: Run a query (${{ matrix.target }}, in ${{ matrix.image }})
         if: ${{ matrix.image }}
         run: |
