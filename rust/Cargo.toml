@@ -1,0 +1,10 @@
+# The Rust packages (see README.md): the potluckdb crate and the README's
+# quickstart. Both build against PotluckDB's libsqlite3-sys from this
+# repository, the way an app does through [patch.crates-io].
+[workspace]
+resolver = "2"
+members = ["potluckdb", "examples/quickstart"]
+exclude = ["libsqlite3-sys", "tests"]
+
+[patch.crates-io]
+libsqlite3-sys = { path = "libsqlite3-sys/0.38" }

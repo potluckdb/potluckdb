@@ -1,0 +1,256 @@
+# The Rust packages (rust/): PotluckDB's libsqlite3-sys, which apps use
+# through [patch.crates-io], and the potluckdb crate on crates.io.
+#
+# - Changes under rust/: check the generated folders; build and test on
+#   Linux x64 only.
+# - Nightly, by hand, or called from another workflow: all 8 platforms.
+# - publish: also tag rust-v<version> (the commit apps name in
+#   [patch.crates-io], with the release's version and SHA-256s recorded),
+#   publish the potluckdb crate to crates.io with trusted publishing (OIDC, no
+#   token), and run the quickstarts the way users do.
+#
+# Everything is built against a release's core archives, so nothing is built
+# before the first release exists; the run then passes with a notice.
+name: rust
+
+on:
+  pull_request:
+    paths: ["rust/**", ".github/workflows/rust.yml"]
+  push:
+    branches: [main]
+    paths: ["rust/**", ".github/workflows/rust.yml"]
+  schedule:
+    - cron: "37 3 * * *"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "PotluckDB version, e.g. 0.8.0-dev.1 (default: the latest release)"
+        required: false
+      publish:
+        description: "Tag rust-v<version> and publish the potluckdb crate for this version"
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      version:
+        description: "PotluckDB version, e.g. 0.8.0-dev.1"
+        type: string
+        required: true
+      publish:
+        description: "Tag rust-v<version> and publish the potluckdb crate for this version"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-${{ github.ref }}-${{ inputs.version }}-${{ inputs.publish }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  RUST_TOOLCHAIN: "1.99.0"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - name: Find the PotluckDB release to build against
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          PUBLISH: ${{ inputs.publish }}
+        run: |
+          if [ -z "$VERSION" ]; then
+            VERSION=$(gh release list -R "$GITHUB_REPOSITORY" --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName // ""')
+            VERSION=${VERSION#v}
+          fi
+          if [ -n "$VERSION" ] && gh release view "v$VERSION" -R "$GITHUB_REPOSITORY" --json tagName > /dev/null 2>&1; then
+            echo "Building against PotluckDB $VERSION"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          elif [ "$PUBLISH" = true ]; then
+            echo "::error::potluckdb/potluckdb has no release v$VERSION, so there is nothing to publish."
+            exit 1
+          else
+            echo "::notice title=Rust packages not built::potluckdb/potluckdb has no release${VERSION:+ v$VERSION} yet, so there is no PotluckDB library to build the Rust packages against. Their build and tests are skipped and run once the first release (0.8.0-dev.1) is out."
+          fi
+      - name: Choose the platforms
+        id: matrix
+        if: steps.release.outputs.version
+        env:
+          ALL: ${{ github.event_name != 'pull_request' && github.event_name != 'push' }}
+          # glibc builds run in AlmaLinux 8 (glibc 2.28, the oldest the library
+          # supports) with the runner's Rust; musl builds natively in Alpine.
+          PLATFORMS: >-
+            [
+              {"target": "linux-x64-gnu", "os": "ubuntu-24.04", "container": "almalinux",
+               "image": "almalinux:8@sha256:8b469a3a78515e8a18ea8fc727e6a3679e1d0c5ba6f58d5b30be3d0d9b86cffe"},
+              {"target": "linux-arm64-gnu", "os": "ubuntu-24.04-arm", "container": "almalinux",
+               "image": "almalinux:8@sha256:8b469a3a78515e8a18ea8fc727e6a3679e1d0c5ba6f58d5b30be3d0d9b86cffe"},
+              {"target": "linux-x64-musl", "os": "ubuntu-24.04", "container": "alpine",
+               "image": "alpine:3.22.6@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8"},
+              {"target": "linux-arm64-musl", "os": "ubuntu-24.04-arm", "container": "alpine",
+               "image": "alpine:3.22.6@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8"},
+              {"target": "macos-arm64", "os": "macos-15"},
+              {"target": "macos-x64", "os": "macos-15-intel"},
+              {"target": "windows-x64", "os": "windows-2025"},
+              {"target": "windows-arm64", "os": "windows-11-arm"}
+            ]
+        run: |
+          if [ "$ALL" = true ]; then
+            echo "matrix=$(jq -c . <<< "$PLATFORMS")" >> "$GITHUB_OUTPUT"
+          else
+            echo "matrix=$(jq -c '[.[] | select(.target == "linux-x64-gnu")]' <<< "$PLATFORMS")" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Needs no PotluckDB release.
+  generated:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: The libsqlite3-sys folders are what vendor_libsqlite3_sys.py writes
+        run: python3 rust/scripts/vendor_libsqlite3_sys.py --check
+      - name: Formatting
+        working-directory: rust
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt --no-self-update
+          cargo "+$RUST_TOOLCHAIN" fmt --check
+          rustfmt "+$RUST_TOOLCHAIN" --check --edition 2021 libsqlite3-sys/potluckdb_core.rs tests/*/src/main.rs
+
+  build:
+    needs: plan
+    if: needs.plan.outputs.version
+    name: build ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix || '[]') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      # Rust's default for Intel Macs is 10.12; the library needs macOS 11.
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Publishing tests the release's own commit, which publish tags.
+          ref: ${{ inputs.publish && format('v{0}', needs.plan.outputs.version) || '' }}
+      - name: Download the PotluckDB library for ${{ matrix.target }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "v$VERSION" -R "$GITHUB_REPOSITORY" -D core \
+            -p "potluckdb-sqlite-$VERSION-${{ matrix.target }}.*" -p SHA256SUMS
+          ls -l core
+      - name: Install Rust ${{ env.RUST_TOOLCHAIN }}
+        if: matrix.container != 'alpine'
+        run: |
+          if ! command -v rustup > /dev/null; then
+            if [ "$RUNNER_OS" = Windows ]; then
+              arch=$([ "$RUNNER_ARCH" = ARM64 ] && echo aarch64 || echo x86_64)
+              curl -sSfLo "$RUNNER_TEMP/rustup-init.exe" "https://static.rust-lang.org/rustup/dist/$arch-pc-windows-msvc/rustup-init.exe"
+              "$RUNNER_TEMP/rustup-init.exe" -y --no-modify-path --profile minimal --default-toolchain none
+              cygpath -w "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            else
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path --profile minimal --default-toolchain none
+              echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            fi
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --no-self-update
+          rustup default "$RUST_TOOLCHAIN"
+          rustc --version --verbose
+      - name: Build and test (glibc 2.28, in AlmaLinux 8)
+        if: matrix.container == 'almalinux'
+        run: |
+          # The runner's Rust toolchain runs on glibc 2.17 and later.
+          docker run --rm -e VERSION -e CARGO_TERM_COLOR -v "$(rustc --print sysroot):/opt/rust:ro" \
+            -v "$GITHUB_WORKSPACE:/src" -w /src "${{ matrix.image }}" bash -euc '
+              dnf -q -y install gcc python3.11 > /dev/null
+              export PATH=/opt/rust/bin:$PATH CARGO_HOME=/tmp/cargo CARGO_TARGET_DIR=/tmp/target
+              python3.11 rust/scripts/ci.py --version "$VERSION" --core-dir core'
+      - name: Build and test (musl, in Alpine)
+        if: matrix.container == 'alpine'
+        run: |
+          docker run --rm -e VERSION -e RUST_TOOLCHAIN -e CARGO_TERM_COLOR \
+            -v "$GITHUB_WORKSPACE:/src" -w /src "${{ matrix.image }}" sh -euc '
+              apk add -q rustup gcc musl-dev python3 curl > /dev/null
+              rustup-init -y -q --profile minimal --default-toolchain "$RUST_TOOLCHAIN" > /dev/null
+              . "$HOME/.cargo/env"
+              rustc --version --verbose
+              python3 rust/scripts/ci.py --version "$VERSION" --core-dir core'
+      - name: Build and test
+        if: ${{ !matrix.container }}
+        env:
+          PYTHON: ${{ runner.os == 'Windows' && 'python' || 'python3' }}
+        run: $PYTHON rust/scripts/ci.py --version "$VERSION" --core-dir core
+
+  publish:
+    needs: [plan, build]
+    if: inputs.publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: crates-io
+    permissions:
+      contents: write # push the rust-v<version> tag
+      id-token: write # crates.io trusted publishing
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: v${{ needs.plan.outputs.version }}
+      - name: Install Rust ${{ env.RUST_TOOLCHAIN }}
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --no-self-update
+          rustup default "$RUST_TOOLCHAIN"
+      - name: Tag rust-v${{ needs.plan.outputs.version }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="rust-v$VERSION"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then
+            echo "$tag exists already; publishing from it"
+            git fetch --depth 1 origin "refs/tags/$tag:refs/tags/$tag"
+            git checkout --detach "$tag"
+          else
+            # The release's version and each archive's SHA-256, on top of the release's commit.
+            gh release download "v$VERSION" -R "$GITHUB_REPOSITORY" -p SHA256SUMS -D "$RUNNER_TEMP"
+            python3 rust/scripts/set_version.py "$VERSION" --sha256sums "$RUNNER_TEMP/SHA256SUMS"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -A rust
+            git commit -m "Rust packages for $VERSION"
+            git tag "$tag"
+            git push origin "refs/tags/$tag"
+            echo "tagged https://github.com/$GITHUB_REPOSITORY/tree/$tag"
+          fi
+      - uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+        id: auth
+      - name: Publish the potluckdb crate to crates.io
+        working-directory: rust
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: |
+          if curl -sf -A "potluckdb-release (https://github.com/potluckdb/potluckdb)" \
+              "https://crates.io/api/v1/crates/potluckdb/$VERSION" > /dev/null; then
+            echo "potluckdb $VERSION is on crates.io already"
+          else
+            # The build jobs tested this commit on all 8 platforms. cargo's own
+            # check would build the crate with crates.io's libsqlite3-sys,
+            # which potluckdb's build script refuses by design.
+            cargo publish --locked -p potluckdb --no-verify
+          fi
+      - name: Run the quickstarts the way users do (tag on GitHub, crate on crates.io)
+        run: python3 rust/scripts/user_quickstart.py --version "$VERSION" --repository "https://github.com/$GITHUB_REPOSITORY"

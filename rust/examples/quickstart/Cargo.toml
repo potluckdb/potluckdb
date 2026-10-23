@@ -1,0 +1,13 @@
+# The README's quickstart: a rusqlite app on PotluckDB's SQLite. The workspace
+# (rust/Cargo.toml) has the [patch.crates-io] entry, pointing at this
+# repository's folder instead of the git tag an app would use.
+[package]
+name = "quickstart"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# `bundled` stays on: PotluckDB's libsqlite3-sys links its library anyway.
+rusqlite = { version = "=0.40.2", features = ["bundled"] }
+potluckdb = { path = "../../potluckdb" }
