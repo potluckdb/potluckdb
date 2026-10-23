@@ -5,7 +5,7 @@ pre-releases.
 
 ## 0.8.0-dev.1 (2026-10-23)
 
-The first pre-release of the new PotluckDB: our build of SQLite as a drop-in library, for Linux, macOS and Windows. It does not sync yet.
+The first pre-release of the new PotluckDB: our build of SQLite as a drop-in library for Linux, macOS and Windows, a drop-in `sqlite3` for Python, and a first taste of sync: the `potluckdb` command keeps a folder the same on several devices. Databases don't sync yet.
 
 ### Highlights
 
@@ -16,8 +16,8 @@ The first pre-release of the new PotluckDB: our build of SQLite as a drop-in lib
 - The macOS library loads on macOS 11 and newer, and the Windows library needs nothing beyond Windows itself (no Visual C++ runtime to install).
 - SELECT potluckdb_version() tells any program which PotluckDB build it is running on.
 - A static build of the same library in lib/static (libsqlite3.a, or sqlite3.lib on Windows), for programs that link SQLite into themselves. Its symbols stay private to the program, so it never clashes with another SQLite loaded in the same process.
-- Node.js: `npm install potluckdb` installs a drop-in replacement for better-sqlite3 that runs on PotluckDB's SQLite. Change `require('better-sqlite3')` to `require('potluckdb')` and your code keeps working, on Node.js 20 and later, on Linux, macOS and Windows.
-- Python: `pip install potluckdb` installs a drop-in replacement for the standard `sqlite3` module that runs on PotluckDB's SQLite. Change `import sqlite3` to `import potluckdb as sqlite3` and your code keeps working, on Python 3.10 to 3.14, on Linux, macOS and Windows.
+- Node.js: a drop-in replacement for better-sqlite3 that runs on PotluckDB's SQLite (change `require('better-sqlite3')` to `require('potluckdb')`), for Node.js 20 and later on Linux, macOS and Windows. Built and tested; it arrives on npm in a coming pre-release.
+- Python: `pip install --pre potluckdb` installs a drop-in replacement for the standard `sqlite3` module that runs on PotluckDB's SQLite. Change `import sqlite3` to `import potluckdb as sqlite3` and your code keeps working, on Python 3.10 to 3.14, on Linux, macOS and Windows.
 
 ### Changes
 
@@ -26,4 +26,4 @@ The first pre-release of the new PotluckDB: our build of SQLite as a drop-in lib
 ### Known issues
 
 - potluckdb sync skips files larger than 1 GB for now.
-- No sync yet, and no language packages yet: this pre-release is the library on its own. Files are signed with Sigstore but not yet with Apple or Windows code signing.
+- Databases don't sync yet (that comes in 0.8.2); this pre-release syncs folders, with the `potluckdb` command. Files are signed with Sigstore but not yet with Apple or Windows code signing.
