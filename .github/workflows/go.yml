@@ -199,7 +199,10 @@ jobs:
         if: matrix.container == 'glibc'
         run: |
           docker run --rm -e VERSION -v "$(go env GOROOT):/opt/go:ro" -v "$GITHUB_WORKSPACE:/src:ro" "${{ matrix.image }}" \
-            bash -euc 'dnf -q -y install gcc > /dev/null; export PATH=/opt/go/bin:$PATH HOME=/tmp GOCACHE=/tmp/gocache
+            bash -euc '# dnf sometimes stalls on a mirror: give each try 5 minutes.
+              for i in 1 2 3; do timeout 300 dnf -q -y --setopt=timeout=30 install gcc > /dev/null && break
+                [ "$i" = 3 ] && exit 1; echo "dnf stalled or failed; trying again"; done
+              export PATH=/opt/go/bin:$PATH HOME=/tmp GOCACHE=/tmp/gocache
               mkdir /tmp/src && cp -r /src/go /src/LICENSE /tmp/src/ && cd /tmp/src/go
               go version; gcc --version | head -1; ldd --version | head -1
               go run ./tools test -version "$VERSION" -core /src/core -target ${{ matrix.target }} -work /tmp/work'
