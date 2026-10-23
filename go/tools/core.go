@@ -45,14 +45,13 @@ type buildInfo struct {
 	Files            map[string]string `json:"files"`
 }
 
-// wanted are the files the modules are made from; a static library is
-// wanted too (target.StaticLibs).
+// wanted are the files the modules are made from, with the static library
+// (staticLib).
 var wanted = []string{
 	"BUILD-INFO.json",
 	"LICENSE.txt",
 	"THIRD_PARTY_NOTICES.txt",
 	"include/sqlite3.h",
-	"include/sqlite3ext.h",
 	"include/potluckdb.h",
 }
 
@@ -117,18 +116,13 @@ func loadCore(version, dir string, t target) (*core, error) {
 			return nil, fmt.Errorf("%s: %w", name, err)
 		}
 	}
-	for _, f := range t.StaticLibs() {
-		if _, ok := members[f]; ok {
-			if err := c.take(members, info, f); err != nil {
-				return nil, fmt.Errorf("%s: %w", name, err)
-			}
-			c.Static = f
-			break
-		}
-	}
-	if c.Static == "" {
+	if _, ok := members[staticLib]; !ok {
 		return nil, errNoStaticLib{name}
 	}
+	if err := c.take(members, info, staticLib); err != nil {
+		return nil, fmt.Errorf("%s: %w", name, err)
+	}
+	c.Static = staticLib
 	return c, nil
 }
 

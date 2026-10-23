@@ -47,28 +47,8 @@ func checkBinary(file string, header, lib []byte) (*binaryFacts, error) {
 		return nil, err
 	}
 	facts := &binaryFacts{}
-	m := sourceIDDefineRE.FindSubmatch(header)
-	if m == nil {
-		return nil, fmt.Errorf("sqlite3.h has no SQLITE_SOURCE_ID")
-	}
-	ours := string(m[1])
-	ids := map[string]bool{}
-	for _, id := range sourceIDRE.FindAll(data, -1) {
-		ids[string(id)] = true
-	}
-	switch {
-	case !ids[ours]:
-		facts.bad("the program does not hold PotluckDB's SQLite (source id %s)", ours)
-	case len(ids) > 1:
-		facts.bad("the program holds more than one SQLite (source ids: %v)", ids)
-	default:
-		facts.ok("one SQLite, PotluckDB's (source id %s)", ours)
-	}
-	inLib, inProgram := bytes.Count(lib, sqliteMagic), bytes.Count(data, sqliteMagic)
-	if inProgram < 1 || inProgram > inLib {
-		facts.bad("SQLite's file header string occurs %d times, the library has it %d times", inProgram, inLib)
-	} else {
-		facts.ok("SQLite's file header string occurs %d times (the library: %d)", inProgram, inLib)
+	if err := checkSQLite(facts, data, header, lib); err != nil {
+		return nil, err
 	}
 	var libs []string
 	var exported []string
@@ -183,4 +163,33 @@ func peImportedDLLs(f *pe.File) []string {
 		}
 	}
 	return dlls
+}
+
+// checkSQLite checks that a program's bytes hold one SQLite, the one of
+// the release's sqlite3.h, as often as the library holds its file header.
+func checkSQLite(facts *binaryFacts, data, header, lib []byte) error {
+	m := sourceIDDefineRE.FindSubmatch(header)
+	if m == nil {
+		return fmt.Errorf("sqlite3.h has no SQLITE_SOURCE_ID")
+	}
+	ours := string(m[1])
+	ids := map[string]bool{}
+	for _, id := range sourceIDRE.FindAll(data, -1) {
+		ids[string(id)] = true
+	}
+	switch {
+	case !ids[ours]:
+		facts.bad("the program does not hold PotluckDB's SQLite (source id %s)", ours)
+	case len(ids) > 1:
+		facts.bad("the program holds more than one SQLite (source ids: %v)", ids)
+	default:
+		facts.ok("one SQLite, PotluckDB's (source id %s)", ours)
+	}
+	inLib, inProgram := bytes.Count(lib, sqliteMagic), bytes.Count(data, sqliteMagic)
+	if inProgram < 1 || inProgram > inLib {
+		facts.bad("SQLite's file header string occurs %d times, the library has it %d times", inProgram, inLib)
+	} else {
+		facts.ok("SQLite's file header string occurs %d times (the library: %d)", inProgram, inLib)
+	}
+	return nil
 }

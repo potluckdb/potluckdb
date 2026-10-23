@@ -120,3 +120,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh workflow run node.yml -R "$GITHUB_REPOSITORY" -f version="$VERSION" -f publish=true
+      - name: Publish the Go modules
+        # go.yml writes the release's modules to potluckdb-go and tags them.
+        # On once its deploy key is set up (go/DESIGN.md).
+        if: vars.GO_PUBLISHING == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run go.yml -R "$GITHUB_REPOSITORY" -f version="$VERSION" -f publish=true

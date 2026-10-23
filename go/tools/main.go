@@ -134,6 +134,7 @@ func cmdTest(args []string) error {
 	work := fs.String("work", filepath.Join("dist", "test"), "work folder (emptied first)")
 	name := fs.String("target", "", "platform to test (default: this machine's, glibc on Linux); another one is built but not run")
 	skipMattn := fs.Bool("skip-mattn-tests", false, "do not run go-sqlite3's tests")
+	missingOK := fs.Bool("missing-ok", false, "pass, with a notice, if the release has no module for the platform")
 	fs.Parse(args)
 	if *version == "" {
 		return errors.New("-version is required")
@@ -152,7 +153,7 @@ func cmdTest(args []string) error {
 	if err != nil {
 		return err
 	}
-	return runE2E(*version, *coreDir, goDir(), work2, t, *skipMattn)
+	return runE2E(*version, *coreDir, goDir(), work2, t, *skipMattn, *missingOK)
 }
 
 func cmdCheckBinary(args []string) error {

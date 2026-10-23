@@ -46,7 +46,9 @@ type e2e struct {
 	failed  []string
 }
 
-func runE2E(version, coreDir, goDir, work string, t target, skipMattn bool) error {
+// runE2E runs the checks for target t. With missingOK, a release without a
+// library module for t passes, with a notice.
+func runE2E(version, coreDir, goDir, work string, t target, skipMattn, missingOK bool) error {
 	e := &e2e{version: version, target: t, goDir: goDir, work: work,
 		tree: filepath.Join(work, "tree"), proxy: filepath.Join(work, "proxy"),
 		run: t.GOOS == runtime.GOOS && t.GOARCH == runtime.GOARCH}
@@ -69,7 +71,12 @@ func runE2E(version, coreDir, goDir, work string, t target, skipMattn bool) erro
 		}
 	}
 	if !found {
-		return fmt.Errorf("the release has no library module for %s: %s", t.Name, res.Skipped[t.Name])
+		why := fmt.Sprintf("PotluckDB %s has no Go library module for %s: %s", version, t.Name, res.Skipped[t.Name])
+		if missingOK {
+			fmt.Printf("::notice title=No Go module for %s::%s. Its checks are skipped.\n", t.Name, why)
+			return nil
+		}
+		return errors.New(why)
 	}
 	modules, err := writeProxy(e.tree, version, e.proxy)
 	if err != nil {

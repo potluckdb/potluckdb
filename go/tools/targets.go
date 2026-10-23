@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"runtime"
-	"sort"
 	"strings"
 )
 
@@ -65,12 +64,6 @@ func targetNames(ts []target) []string {
 	return names
 }
 
-func sortedTargets(ts []target) []target {
-	ts = append([]target(nil), ts...)
-	sort.Slice(ts, func(i, j int) bool { return ts[i].Name < ts[j].Name })
-	return ts
-}
-
 // Archive is the core archive's file name for the target.
 func (t target) Archive(version string) string {
 	ext := "tar.gz"
@@ -80,14 +73,11 @@ func (t target) Archive(version string) string {
 	return fmt.Sprintf("potluckdb-sqlite-%s-%s.%s", version, t.Name, ext)
 }
 
-// StaticLibs are the static libraries in the core archive that Go can
-// link, best first. On Windows, cgo needs a MinGW-compatible library;
-// the archives' MSVC library (lib/static/sqlite3.lib) does not link with
-// MinGW (see DESIGN.md), so a Windows target is only available once its
-// archive has lib/static/libsqlite3.a.
-func (t target) StaticLibs() []string {
-	return []string{"lib/static/libsqlite3.a"}
-}
+// staticLib is the static library in a core archive that cgo can link.
+// On Windows that must be a MinGW library; the archives' MSVC library
+// (lib/static/sqlite3.lib) does not link with MinGW (see DESIGN.md), so a
+// Windows target has a module only once its archive has this file too.
+const staticLib = "lib/static/libsqlite3.a"
 
 // Module is the Go module path of the target's library module.
 func (t target) Module(prefix string) string { return prefix + "/lib/" + t.Name }
