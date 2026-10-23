@@ -1,6 +1,7 @@
 """Release check for one core archive: unpack it, load the library and run
-a query through SQLite's C API, then check an existing program (Python's own
-sqlite3 module) uses it in place of its usual SQLite where it can.
+a query through SQLite's C API, check the frozen math vectors give exactly
+the recorded bits (tests/vectors), then check an existing program (Python's
+own sqlite3 module) uses it in place of its usual SQLite where it can.
 
 Usage: python tests/release/smoke.py <archive> <expected version>
 
@@ -17,6 +18,8 @@ import sys
 import tarfile
 import tempfile
 import zipfile
+
+MATH_VECTORS = pathlib.Path(__file__).resolve().parent.parent / "vectors" / "check_math.py"
 
 PROBE = """
 import sqlite3
@@ -111,6 +114,10 @@ def main():
         if version != expected:
             sys.exit("library reports %s, expected %s" % (version, expected))
         print("ok: %s runs a query: %s" % (path.name, answer))
+        sys.stdout.flush()
+        # In a child process too, so the library is unloaded again.
+        if subprocess.run([sys.executable, str(MATH_VECTORS), str(path)]).returncode != 0:
+            sys.exit("the math vectors differ: this platform computes different bits (PRD K1)")
         dropin = stdlib_dropin(path)
         if dropin is None:
             print("note: this Python can't load another SQLite; drop-in check skipped")
