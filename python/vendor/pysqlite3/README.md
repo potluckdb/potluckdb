@@ -43,6 +43,13 @@ PotluckDB (no code copied from CPython):
   `cursor.c`, callbacks (functions, aggregates, collations, trace, progress,
   authorizer) use reference-counted contexts that SQLite releases, objects
   support the garbage collector, and unclosed connections warn (3.13+).
+- **Safer than the standard module** where callbacks interfere with a running
+  statement: a function or converter that closes the connection, reuses the
+  cursor it runs in, or replaces the text factory gets a `ProgrammingError`
+  instead of a crash; window functions work over empty frames. The statement
+  cache refers to its connection weakly, so a connection nobody refers to is
+  closed at once (as in Python 3.10) rather than at the next garbage
+  collection.
 - **Removed pysqlite3-only extras**: `Connection(flags=, vfs=)`,
   `open_blob()`, `set_busy_handler()`, `set_busy_timeout()`, `set_key()`,
   `reset_key()`.
