@@ -45,7 +45,7 @@ See [Sync a folder](docs/src/content/docs/guides/sync-a-folder.md).
 | `CHANGELOG.md` | Release notes for every version |
 | `changes/` | Notes for changes not released yet |
 | `tools/` | Release tooling |
-| `tests/` | Tests of the tooling, and the release checks run on every platform |
+| `tests/` | Tests of the tooling, and the release checks run on every platform, including the frozen math vectors (`tests/vectors`): the exact bits SQL math must give everywhere |
 | `docs/` | The docs site, docs.potluckdb.com ([Starlight](https://starlight.astro.build/)) |
 | `node/` | The Node.js package, `potluckdb` on npm: a drop-in replacement for better-sqlite3 |
 
