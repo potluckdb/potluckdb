@@ -1,0 +1,45 @@
+{
+  "better-sqlite3": "13.0.3",
+  "failures": [
+    {
+      "test": "entrypoints publishes a statically-bound entrypoint for the current platform",
+      "reason": "Tests better-sqlite3's own file layout (lib/<platform>.js loading prebuilds/<platform>.node from the same package). potluckdb has the same entry points, but they load the binary from the @potluckdb/<platform> package; test/entrypoints.test.js covers them."
+    },
+    {
+      "test": "entrypoints rejects nativeBinding from statically-bound entrypoints",
+      "reason": "Same as above: better-sqlite3's file layout. Covered by test/entrypoints.test.js."
+    },
+    {
+      "test": "entrypoints keeps detection and compilation out of static entrypoint graphs",
+      "reason": "Same as above: better-sqlite3's file layout. Covered by test/entrypoints.test.js."
+    },
+    {
+      "test": "Database#pragma() should execute the pragma, returning rows of results",
+      "reason": "Expects better-sqlite3's compiled-in page cache size (cache_size -16000, 16 MB). PotluckDB's library keeps SQLite's default (-2000, 2 MB), which only SQLite's build options can change."
+    },
+    {
+      "test": "Database#pragma() should optionally return simpler results",
+      "reason": "Same as above: default cache_size."
+    },
+    {
+      "test": "Database#pragma() should obey PRAGMA changes",
+      "reason": "Same as above: default cache_size."
+    },
+    {
+      "test": "Database#pragma() should respect readonly connections",
+      "reason": "Same as above: default cache_size."
+    },
+    {
+      "test": "verbose mode should not fully expand very long bound parameter",
+      "reason": "better-sqlite3 builds SQLite with SQLITE_TRACE_SIZE_LIMIT=32, which shortens long values in the SQL passed to the verbose logger. PotluckDB's library logs them in full."
+    },
+    {
+      "test": "miscellaneous supports LIMIT in DELETE statements",
+      "reason": "DELETE ... LIMIT needs SQLite built with SQLITE_ENABLE_UPDATE_DELETE_LIMIT, which PotluckDB's library is not (yet)."
+    },
+    {
+      "test": "miscellaneous supports LIMIT in UPDATE statements",
+      "reason": "UPDATE ... LIMIT needs SQLite built with SQLITE_ENABLE_UPDATE_DELETE_LIMIT, which PotluckDB's library is not (yet)."
+    }
+  ]
+}
