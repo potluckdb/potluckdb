@@ -4,12 +4,12 @@
 #
 #   pull request / push touching python/   tooling tests, plus Linux x64 wheels
 #                                          for Python 3.10 and 3.14
-#   nightly, or run by hand                all 8 platforms x 5 Python versions
-#   run by hand or called with publish     the same, then upload to PyPI
+#   nightly, by hand, or called            all 8 platforms x 5 Python versions
+#   with publish                           the same, then upload to PyPI
 #
-# Wheels need the core release (python/CORE_VERSION, or the version input) on
-# https://github.com/potluckdb/potluckdb/releases. Until it exists, the wheel
-# jobs are skipped with a notice instead of failing.
+# Wheels link a release's core archives (the version input, else the latest
+# release on https://github.com/potluckdb/potluckdb/releases). Before the
+# first release exists, the wheel jobs are skipped with a notice.
 name: python
 
 on:
@@ -23,7 +23,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "PotluckDB core release to build against, e.g. 0.8.0-dev.1 (default: python/CORE_VERSION)"
+        description: "PotluckDB version, e.g. 0.8.0-dev.1 (default: the latest release)"
         required: false
       publish:
         description: "Upload the wheels to PyPI"
@@ -32,13 +32,13 @@ on:
   workflow_call:
     inputs:
       version:
-        description: "PotluckDB core release to build against, e.g. 0.8.0-dev.1"
+        description: "PotluckDB version, e.g. 0.8.0-dev.1"
         type: string
         required: true
       publish:
         description: "Upload the wheels to PyPI"
         type: boolean
-        default: true
+        default: false
 
 permissions:
   contents: read
@@ -57,7 +57,7 @@ jobs:
         run: python3 python/tests/test_tooling.py -v
 
   core:
-    # Which core release to build against, and whether it is out yet.
+    # The PotluckDB release to build against, and whether it is out.
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
@@ -67,19 +67,24 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: check
         env:
-          INPUT_VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
           PUBLISH: ${{ inputs.publish && 'true' || 'false' }}
         run: |
-          version="${INPUT_VERSION:-$(cat python/CORE_VERSION)}"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          if python3 python/core_archive.py release-exists --version "$version"; then
+          if [ -z "$VERSION" ]; then
+            VERSION=$(gh release list -R "$GITHUB_REPOSITORY" --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName // ""')
+            VERSION=${VERSION#v}
+          fi
+          if [ -n "$VERSION" ] && python3 python/core_archive.py release-exists --version "$VERSION"; then
+            echo "Building against PotluckDB $VERSION"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
             echo "released=true" >> "$GITHUB_OUTPUT"
           elif [ "$PUBLISH" = true ]; then
-            echo "::error title=No PotluckDB release::PotluckDB core $version is not released (https://github.com/potluckdb/potluckdb/releases/tag/v$version), so there is nothing to publish."
+            echo "::error title=No PotluckDB release::potluckdb/potluckdb has no release v$VERSION with every platform's archive, so there is nothing to publish."
             exit 1
           else
             echo "released=false" >> "$GITHUB_OUTPUT"
-            echo "::notice title=Python wheels skipped::PotluckDB core $version is not released yet (https://github.com/potluckdb/potluckdb/releases/tag/v$version). The wheels are built and tested once it is."
+            echo "::notice title=Python package not built::potluckdb/potluckdb has no release${VERSION:+ v$VERSION} yet, so there is no PotluckDB library to build the Python wheels against. Their build and tests are skipped and run once the first release (0.8.0-dev.1) is out."
           fi
 
   quick:
@@ -158,9 +163,9 @@ jobs:
   publish:
     # Upload with PyPI trusted publishing. PyPI must trust workflow python.yml
     # of potluckdb/potluckdb, environment "pypi". PyPI does not accept a
-    # reusable (called) workflow as the publisher (pypi/warehouse#11096), so
-    # publish by running this workflow by hand; a workflow that calls it
-    # must build only (publish: false) or be registered on PyPI itself.
+    # called (reusable) workflow as the publisher (pypi/warehouse#11096), so
+    # start it on its own, e.g. from release.yml as for npm:
+    #   gh workflow run python.yml -f version="$VERSION" -f publish=true
     needs: [core, wheels]
     if: inputs.publish
     runs-on: ubuntu-24.04

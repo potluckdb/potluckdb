@@ -44,11 +44,11 @@ See [Sync a folder](docs/src/content/docs/guides/sync-a-folder.md).
 | --- | --- |
 | `CHANGELOG.md` | Release notes for every version |
 | `changes/` | Notes for changes not released yet |
-| `python/` | The Python package `potluckdb`, a drop-in `sqlite3` replacement |
 | `tools/` | Release tooling |
 | `tests/` | Tests of the tooling, and the release checks run on every platform |
 | `docs/` | The docs site, docs.potluckdb.com ([Starlight](https://starlight.astro.build/)) |
 | `node/` | The Node.js package, `potluckdb` on npm: a drop-in replacement for better-sqlite3 |
+| `python/` | The Python package, `potluckdb` on PyPI: a drop-in replacement for the `sqlite3` module |
 
 Language add-ons, docs and examples arrive here during the 0.8 series. The
 sync engine itself is built in a private repository; its binaries are
