@@ -112,43 +112,48 @@ def make_alias(directory):
 
 # --- known failures -------------------------------------------------------
 
-def _version_matches(token):
+def _version_matches(token, python):
     m = re.fullmatch(r"(\d+)\.(\d+)(\+|-(\d+)\.(\d+))?", token)
     if not m:
         raise ValueError(f"bad version condition {token!r}")
     low = (int(m[1]), int(m[2]))
     if m[3] is None:
-        return PYTHON == low
+        return python == low
     if m[3] == "+":
-        return PYTHON >= low
-    return low <= PYTHON <= (int(m[4]), int(m[5]))
+        return python >= low
+    return low <= python <= (int(m[4]), int(m[5]))
 
 
 PLATFORMS = {"linux": "Linux", "macos": "Darwin", "windows": "Windows"}
 
 
-def load_known_failures():
+def parse_known_failures(text, python=PYTHON, system=None, name="known failures"):
     """{test id: reason} for the failures expected on this Python and platform."""
+    system = system or platform.system()
     known = {}
-    for number, raw in enumerate(KNOWN_FAILURES.read_text(encoding="utf-8").splitlines(), 1):
+    for number, raw in enumerate(text.splitlines(), 1):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
         m = re.fullmatch(r"(\S+)\s*(?:\[([^\]]*)\])?\s*#\s*(.+)", line)
         if not m:
-            raise SystemExit(f"{KNOWN_FAILURES.name}:{number}: expected '<test id> [conditions] # reason'")
+            raise ValueError(f"{name}:{number}: expected '<test id> [conditions] # reason'")
         test_id, conditions, reason = m[1], (m[2] or "").replace(",", " ").split(), m[3]
         versions = [c for c in conditions if c[0].isdigit()]
         platforms = [c for c in conditions if not c[0].isdigit()]
         for p in platforms:
             if p not in PLATFORMS:
-                raise SystemExit(f"{KNOWN_FAILURES.name}:{number}: unknown platform {p!r}")
-        if versions and not any(_version_matches(v) for v in versions):
+                raise ValueError(f"{name}:{number}: unknown platform {p!r}")
+        if versions and not any(_version_matches(v, python) for v in versions):
             continue
-        if platforms and platform.system() not in {PLATFORMS[p] for p in platforms}:
+        if platforms and system not in {PLATFORMS[p] for p in platforms}:
             continue
         known[test_id] = reason
     return known
+
+
+def load_known_failures():
+    return parse_known_failures(KNOWN_FAILURES.read_text(encoding="utf-8"), name=KNOWN_FAILURES.name)
 
 
 # --- running --------------------------------------------------------------
