@@ -212,10 +212,9 @@ jobs:
           pattern: dotnet-native-*
           path: dotnet/artifacts/download
       - name: Gather the native libraries
-        run: |
-          mkdir -p artifacts/native
-          for dir in artifacts/download/dotnet-native-*; do mv "$dir" "artifacts/native/${dir#artifacts/download/dotnet-native-}"; done
-          ls -lR artifacts/native
+        env:
+          PYTHON: ${{ runner.os == 'Windows' && 'python' || 'python3' }}
+        run: $PYTHON scripts/collect.py artifacts/download
       - name: Install the system's SQLite (for the tests with two SQLite libraries)
         if: runner.os == 'Linux' && matrix.container != 'alpine'
         run: dpkg -s libsqlite3-0 > /dev/null 2>&1 || (sudo apt-get update -q && sudo apt-get install -y -q libsqlite3-0)
@@ -266,8 +265,7 @@ jobs:
           path: dotnet/artifacts/download
       - name: Make the packages, with the native library of all 8 platforms
         run: |
-          mkdir -p artifacts/native
-          for dir in artifacts/download/dotnet-native-*; do mv "$dir" "artifacts/native/${dir#artifacts/download/dotnet-native-}"; done
+          python3 scripts/collect.py artifacts/download
           python3 scripts/pack.py --version "$VERSION" --all
       - name: Log in to nuget.org (trusted publishing)
         id: login

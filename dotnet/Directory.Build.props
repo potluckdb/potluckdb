@@ -3,7 +3,7 @@
   <PropertyGroup>
     <!-- The PotluckDB core version the packages are built from; the packages
          get the same version. scripts/pack.py sets it to the version it packs. -->
-    <PotluckDBVersion Condition="'$(PotluckDBVersion)' == ''">0.8.0-dev.0</PotluckDBVersion>
+    <PotluckDBVersion Condition="'$(PotluckDBVersion)' == ''">0.8.0-dev.1</PotluckDBVersion>
     <LangVersion>12</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
