@@ -1,0 +1,28 @@
+<Project>
+  <!-- Imported into every project that references PotluckDB.SQLitePCLRaw, also
+       through PotluckDB.Data.Sqlite. It stops builds that would quietly run on
+       a different SQLite than PotluckDB's. Set PotluckDBCheckBundles to false
+       to turn these checks off. -->
+  <Target Name="_PotluckDBCheckBundles"
+          AfterTargets="ResolvePackageAssets"
+          Condition="'$(PotluckDBCheckBundles)' != 'false' and '$(DesignTimeBuild)' != 'true'">
+    <ItemGroup>
+      <!-- Every SQLitePCLRaw bundle has an assembly SQLitePCLRaw.batteries_v2,
+           which Microsoft.Data.Sqlite.Core loads by name. With two of them, the
+           build keeps one of the two, which may not be PotluckDB's. -->
+      <_PotluckDBOtherBundle Include="@(RuntimeCopyLocalItems)"
+          Condition="'%(Filename)%(Extension)' == 'SQLitePCLRaw.batteries_v2.dll' and '%(RuntimeCopyLocalItems.NuGetPackageId)' != 'PotluckDB.SQLitePCLRaw'" />
+      <_PotluckDBOtherBundle Include="@(ResolvedCompileFileDefinitions)"
+          Condition="'%(Filename)%(Extension)' == 'SQLitePCLRaw.batteries_v2.dll' and '%(ResolvedCompileFileDefinitions.NuGetPackageId)' != 'PotluckDB.SQLitePCLRaw'" />
+      <_PotluckDBSqliteNetPcl Include="@(RuntimeCopyLocalItems)"
+          Condition="'%(RuntimeCopyLocalItems.NuGetPackageId)' == 'sqlite-net-pcl'" />
+    </ItemGroup>
+    <PropertyGroup>
+      <_PotluckDBOtherBundles>@(_PotluckDBOtherBundle->'%(NuGetPackageId) %(NuGetPackageVersion)'->Distinct(), ', ')</_PotluckDBOtherBundles>
+    </PropertyGroup>
+    <Error Condition="'$(_PotluckDBOtherBundles)' != ''" Code="POTLUCKDB001"
+           Text="This project uses PotluckDB.SQLitePCLRaw and also $(_PotluckDBOtherBundles), which sets up a different SQLite, so the app might not run on PotluckDB's. Microsoft.Data.Sqlite and Microsoft.EntityFrameworkCore.Sqlite bring SQLitePCLRaw.bundle_e_sqlite3: replace Microsoft.Data.Sqlite with PotluckDB.Data.Sqlite, and Microsoft.EntityFrameworkCore.Sqlite with Microsoft.EntityFrameworkCore.Sqlite.Core. To build anyway, set the property PotluckDBCheckBundles to false." />
+    <Warning Condition="'@(_PotluckDBSqliteNetPcl)' != ''" Code="POTLUCKDB002"
+             Text="sqlite-net-pcl sets up its own SQLite (e_sqlite3) when it is first used. Call SQLitePCL.Batteries_V2.Init() at startup, before using sqlite-net, so that it runs on PotluckDB's; or replace sqlite-net-pcl with sqlite-net-base. Once the call is in place, add POTLUCKDB002 to NoWarn." />
+  </Target>
+</Project>

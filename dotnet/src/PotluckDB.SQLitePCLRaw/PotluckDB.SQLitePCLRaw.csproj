@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The package PotluckDB.SQLitePCLRaw: a SQLitePCLRaw bundle, like
+       SQLitePCLRaw.bundle_e_sqlite3, for PotluckDB's build of SQLite. It holds
+       SQLitePCLRaw.batteries_v2.dll and the native library for each platform
+       (runtimes/<rid>/native/), which scripts/native.py makes in
+       artifacts/native/<rid>/. Pack it with scripts/pack.py. -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>SQLitePCLRaw.batteries_v2</AssemblyName>
+    <RootNamespace>SQLitePCL</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <DebugType>embedded</DebugType>
+
+    <PackageId>PotluckDB.SQLitePCLRaw</PackageId>
+    <Version>$(PotluckDBVersion)</Version>
+    <Authors>PotluckDB</Authors>
+    <Description>PotluckDB's build of SQLite for SQLitePCLRaw, the native layer under Microsoft.Data.Sqlite, EF Core and sqlite-net. It takes the place of SQLitePCLRaw.bundle_e_sqlite3, for Linux, macOS and Windows.</Description>
+    <PackageTags>potluckdb;sqlite;sqlite3;sqlitepclraw;local-first;sync</PackageTags>
+    <PackageProjectUrl>https://github.com/potluckdb/potluckdb/tree/main/dotnet</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/potluckdb/potluckdb</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <!-- The package holds code under Apache-2.0 and PotluckDB's native library
+         under its own licence, so it names a licence file, not an expression.
+         scripts/pack.py writes the file from the core archive's licence. -->
+    <PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
+    <PotluckDBNativeDir Condition="'$(PotluckDBNativeDir)' == ''">$(MSBuildThisFileDirectory)../../artifacts/native/</PotluckDBNativeDir>
+    <PotluckDBLicenseFile Condition="'$(PotluckDBLicenseFile)' == ''">$(MSBuildThisFileDirectory)../../artifacts/license/LICENSE.txt</PotluckDBLicenseFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SQLitePCLRaw.core" Version="3.0.5" />
+    <PackageReference Include="SQLitePCLRaw.provider.dynamic_cdecl" Version="3.0.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="/" />
+    <None Include="$(PotluckDBLicenseFile)" Pack="true" PackagePath="/" Visible="false" />
+    <None Include="PotluckDB.SQLitePCLRaw.targets" Pack="true" PackagePath="buildTransitive/" />
+    <None Include="$(PotluckDBNativeDir)**/*potluckdb_dotnet.*" Pack="true" PackagePath="runtimes/%(RecursiveDir)native/%(Filename)%(Extension)" Visible="false" />
+  </ItemGroup>
+
+</Project>

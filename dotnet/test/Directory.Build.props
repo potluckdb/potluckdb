@@ -1,0 +1,9 @@
+<Project>
+  <Import Project="../Directory.Build.props" />
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <!-- The packages under test are rebuilt with the same version, so they get
+         a package folder of their own, which test/run.py empties of them. -->
+    <RestorePackagesPath>$(MSBuildThisFileDirectory)../artifacts/test-packages/</RestorePackagesPath>
+  </PropertyGroup>
+</Project>

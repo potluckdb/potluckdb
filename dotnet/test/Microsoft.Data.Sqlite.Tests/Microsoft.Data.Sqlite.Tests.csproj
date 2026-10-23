@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Microsoft.Data.Sqlite's own tests (the .cs files here, unmodified from
+       https://github.com/dotnet/efcore/tree/v10.0.12/test/Microsoft.Data.Sqlite.Tests,
+       MIT, see LICENSE.txt; PotluckDB/ is ours), run against
+       PotluckDB.Data.Sqlite. test/run.py runs them; tests listed in
+       known-failures.json may fail, for the reason given there.
+
+       The tests see Microsoft.Data.Sqlite's internals, as in efcore: the
+       assembly has the name and public key that Microsoft.Data.Sqlite grants
+       them to (InternalsVisibleTo). SQLITE3 selects the expectations for a
+       SQLite library that Microsoft.Data.Sqlite doesn't know by name, which
+       PotluckDB's is. -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>Microsoft.Data.Sqlite.sqlite3.Tests</AssemblyName>
+    <RootNamespace>Microsoft.Data.Sqlite</RootNamespace>
+    <DefineConstants>$(DefineConstants);SQLITE3</DefineConstants>
+    <AssemblyOriginatorKeyFile>AspNetCore.public.snk</AssemblyOriginatorKeyFile>
+    <PublicSign>true</PublicSign>
+    <SignAssembly>true</SignAssembly>
+    <IsTestProject>true</IsTestProject>
+    <!-- The upstream code as it is, with its own style. -->
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <NoWarn>$(NoWarn);xUnit1004;xUnit1012;xUnit1026;xUnit1030;xUnit2013;CS0618</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="PotluckDB.Data.Sqlite" Version="$(PotluckDBVersion)" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.10.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" />
+  </ItemGroup>
+
+</Project>
