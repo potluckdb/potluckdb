@@ -78,13 +78,16 @@ jobs:
         shell: bash
         env:
           PYTHON: ${{ runner.os == 'Windows' && 'python' || 'python3' }}
-        run: $PYTHON tests/release/smoke.py dist/potluckdb-sqlite-"$VERSION"-${{ matrix.target }}.* "$VERSION"
+        run: |
+          $PYTHON tests/release/smoke.py dist/potluckdb-sqlite-"$VERSION"-${{ matrix.target }}.* "$VERSION"
+          $PYTHON tests/release/cli_smoke.py dist/potluckdb-cli-"$VERSION"-${{ matrix.target }}.* "$VERSION"
       - name: Run a query (${{ matrix.target }}, in ${{ matrix.image }})
         if: ${{ matrix.image }}
         run: |
           docker run --rm -e VERSION -v "$PWD:/w" -w /w ${{ matrix.image }} sh -euc '
             if command -v apk > /dev/null; then apk add -q python3 > /dev/null; else dnf -q -y install python3 > /dev/null; fi
-            python3 tests/release/smoke.py dist/potluckdb-sqlite-"$VERSION"-${{ matrix.target }}.tar.gz "$VERSION"'
+            python3 tests/release/smoke.py dist/potluckdb-sqlite-"$VERSION"-${{ matrix.target }}.tar.gz "$VERSION"
+            python3 tests/release/cli_smoke.py dist/potluckdb-cli-"$VERSION"-${{ matrix.target }}.tar.gz "$VERSION"'
 
   finalize:
     needs: test
