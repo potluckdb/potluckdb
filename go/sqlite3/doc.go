@@ -3,9 +3,14 @@ Package sqlite3 provides interface to SQLite3 databases.
 
 This works as a driver for database/sql.
 
+It is PotluckDB's drop-in replacement for github.com/mattn/go-sqlite3: the
+same package with the same API, using PotluckDB's build of SQLite, which it
+links in ready-made instead of compiling SQLite. See CoreVersion and the
+README for the differences.
+
 Installation
 
-	go get github.com/mattn/go-sqlite3
+	go get github.com/potluckdb/potluckdb-go/sqlite3
 
 # Supported Types
 

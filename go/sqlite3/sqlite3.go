@@ -1661,6 +1661,11 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 		return nil
 	}
 
+	// PotluckDB: the SQLite defaults that build tags set (see potluckdb.go).
+	if err := applyConnectionDefaults(db); err != nil {
+		return fail(err)
+	}
+
 	// Busy timeout
 	if err := exec(fmt.Sprintf("PRAGMA busy_timeout = %d;", busyTimeout)); err != nil {
 		return fail(err)

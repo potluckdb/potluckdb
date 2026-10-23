@@ -1,0 +1,3 @@
+# PotluckDB for Go
+
+(draft)
