@@ -6,7 +6,18 @@ sidebar:
 ---
 
 Pre-releases ship PotluckDB as a drop-in SQLite library: programs that use
-SQLite load it in place of their usual one. Sync is not switched on yet.
+SQLite load it in place of their usual one. Databases don't sync yet; folders
+do, with the [`potluckdb` command](/guides/sync-a-folder/).
+
+From Python, the quickest start is the package:
+
+```sh
+pip install --pre potluckdb
+python -c "import potluckdb as sqlite3; print(sqlite3.connect(':memory:').execute('select potluckdb_version()').fetchone())"
+```
+
+See [Python](/guides/python/) and [Node.js](/guides/node/). For any other
+program, use the library directly:
 
 ## 1. Download
 
