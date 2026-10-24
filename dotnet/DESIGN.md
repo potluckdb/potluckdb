@@ -78,11 +78,12 @@ editing and re-signing the binary. The small library avoids both.
 **Windows: the core's `bin/sqlite3.dll`, renamed.** Windows binds each import
 to a named DLL and identifies loaded DLLs by file name, so a renamed DLL can't
 be confused with another `sqlite3.dll`, `e_sqlite3.dll` or `winsqlite3.dll`.
-It is the release's file byte for byte, needs only kernel32, and no compiler.
+It is the release's file byte for byte, needs only Windows itself (its sync
+engine uses Windows' networking and crypto DLLs), and no compiler.
 
 `scripts/native.py` builds or copies the library and checks it: what it
 exports, its SONAME or install name, what it needs (only the C library,
-libSystem or kernel32), the oldest system it runs on (glibc 2.28, macOS 11)
+libSystem or Windows' own DLLs), the oldest system it runs on (glibc 2.28, macOS 11)
 and its CPU. Linux builds run in manylinux_2_28 (glibc) and Alpine 3.22 (musl).
 
 ## The provider: SQLitePCLRaw's own dynamic provider
