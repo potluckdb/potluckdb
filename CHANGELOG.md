@@ -3,6 +3,18 @@
 Every PotluckDB release, newest first. Versions with `-dev` or `-rc` are
 pre-releases.
 
+## 0.8.0-dev.3 (2026-10-24)
+
+Databases sync: add `?potluckdb=<bucket>` to a database's address (for example `file:app.db?potluckdb=s3://my-bucket/app`), or put a file `app.db.potluckdb` next to it, and every program running on PotluckDB's library keeps that database the same on all devices that open it. Changes reach the other devices in about a second, and a device without the database gets it from the bucket.
+
+### Highlights
+
+- `potluckdb attach app.db s3://my-bucket/app` makes a database sync without changing any program: it writes `app.db.potluckdb` next to the database, which every program on PotluckDB's library reads. `potluckdb detach app.db` stops it.
+
+### Known issues
+
+- A synced database takes changes from one device at a time for now; several writing devices come in 0.8.3. When two devices write at the same time, one device's changes are not merged: they are kept in a copy next to its database (`app.db.conflict-<time>.db`).
+
 ## 0.8.0-dev.2 (2026-10-23)
 
 .NET: the NuGet package `PotluckDB.Data.Sqlite` runs Microsoft.Data.Sqlite on PotluckDB's SQLite. Use it in place of `Microsoft.Data.Sqlite` and your code, and Dapper or EF Core on top, keeps working, on .NET 8 and later, on Linux, macOS and Windows. For sqlite-net, add `PotluckDB.SQLitePCLRaw` and call `SQLitePCL.Batteries_V2.Init()` once at startup.
