@@ -40,7 +40,10 @@ from targets import TARGETS, library_name  # noqa: E402
 LOOKUP = "potluckdb_dotnet_symbol"
 MIN_GLIBC = "2.28"
 MIN_MACOS = "11.0"
-GLIBC_NEEDS = {"libc.so.6", "libm.so.6", "libdl.so.2", "libpthread.so.0"}
+# The C library, and the dynamic loader itself (the sync engine's thread-local
+# data uses __tls_get_addr, which it provides).
+GLIBC_NEEDS = {"libc.so.6", "libm.so.6", "libdl.so.2", "libpthread.so.0",
+               "ld-linux-x86-64.so.2", "ld-linux-aarch64.so.1"}
 # What the library may load on Windows: Windows itself (as PotluckDB's own
 # sqlite3.dll), never the C runtime.
 WINDOWS_DLLS = {"kernel32.dll", "advapi32.dll", "ntdll.dll", "userenv.dll", "ws2_32.dll", "dbghelp.dll",
