@@ -43,7 +43,8 @@ go mod tidy
   wrong setting stops with a message saying what to do.
 - `go mod tidy` and `go mod download` fetch the library for every platform;
   `go build` and `go test` use only your platform's.
-- Databases sync in a later pre-release; for now it runs queries exactly like
-  go-sqlite3.
+- Databases sync too: `potluckdb attach app.db s3://my-bucket/app` once,
+  with no code change ([Sync a database](/guides/sync-a-database/)). One
+  device writes at a time for now.
 
 All the details: [go/README.md](https://github.com/potluckdb/potluckdb/tree/main/go).

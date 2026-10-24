@@ -40,8 +40,9 @@ SQLite. Remove the other package as the table says.
 
 ## Good to know
 
-- Databases sync in a later pre-release (0.8.2); for now it runs queries
-  exactly like Microsoft.Data.Sqlite.
+- Databases sync too: `potluckdb attach app.db s3://my-bucket/app` once,
+  with no code change ([Sync a database](/guides/sync-a-database/)). One
+  device writes at a time for now.
 - Microsoft.Data.Sqlite's own test suite passes against it on every platform.
 - Foreign keys are on, as with Microsoft.Data.Sqlite's default SQLite.
 - `Password=` in the connection string has no effect: the library doesn't

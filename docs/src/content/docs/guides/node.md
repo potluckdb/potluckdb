@@ -21,7 +21,8 @@ few cases listed in the package's README.
 
 ## Good to know
 
-- Databases sync in a later pre-release (0.8.2); for now it runs queries
-  exactly like better-sqlite3.
+- Databases sync too: `potluckdb attach app.db s3://my-bucket/app` once,
+  with no code change ([Sync a database](/guides/sync-a-database/)). One
+  device writes at a time for now.
 - One prebuilt binary per platform works on every Node.js version from 20 on
   (it uses Node-API), with no compiling at install time.

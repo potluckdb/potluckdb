@@ -29,8 +29,9 @@ Two names are added: `potluckdb.__version__` (this package) and
 
 ## Good to know
 
-- Databases sync in a later pre-release (0.8.2); for now it runs queries
-  exactly like `sqlite3`.
+- Databases sync too: `potluckdb attach app.db s3://my-bucket/app` once,
+  with no code change ([Sync a database](/guides/sync-a-database/)). One
+  device writes at a time for now.
 - Database names starting with `file:` are always read as URIs.
 - It never clashes with the standard `sqlite3` in the same program: each
   uses its own SQLite.
