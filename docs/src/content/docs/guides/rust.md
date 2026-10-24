@@ -45,12 +45,10 @@ error that says what to change.
 
 ## Good to know
 
-- Databases sync too: `potluckdb attach app.db s3://my-bucket/app` once,
-  with no code change ([Sync a database](/guides/sync-a-database/)). One
-  device writes at a time for now.
-- Queries run as with rusqlite's bundled SQLite, with a few differences in
-  build options: foreign keys are off until `PRAGMA foreign_keys = ON`, and
-  there is no `soundex()`.
+- Databases sync in a later pre-release (0.8.2); for now it runs queries
+  exactly like rusqlite's bundled SQLite, with a few differences in build
+  options (foreign keys are off until `PRAGMA foreign_keys = ON`, no
+  `soundex()`).
 - rusqlite's own test suite passes against it on every platform.
 - Write pre-release versions with `=`: Cargo otherwise moves to a newer
   pre-release, which no longer matches the `tag`.
