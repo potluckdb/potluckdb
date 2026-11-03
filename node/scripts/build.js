@@ -35,7 +35,7 @@ async function main() {
 	const nodeGyp = require.resolve('node-gyp/bin/node-gyp.js');
 	execFileSync(process.execPath, [
 		nodeGyp, 'rebuild', `--arch=${t.cpu}`, '--jobs=max', debug ? '--debug' : '--release',
-		`--potluckdb_core=${core.replace(/\\/g, '/')}`,
+		`--potluckdb_core=${core.replace(/\\/g, '/')}`, ...(t.libc ? [`--potluckdb_libc=${t.libc}`] : []),
 	], { cwd: ROOT, stdio: 'inherit' });
 
 	const out = path.join(ROOT, 'prebuilds', target);

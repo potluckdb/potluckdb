@@ -3,8 +3,14 @@
 // - it exports only the Node-API entry points, so none of SQLite's symbols
 //   (sqlite3_*) or PotluckDB's (potluckdb_*): the library is linked in with
 //   hidden symbols and can't clash with another SQLite in the same process;
-// - it runs on the oldest systems PotluckDB supports: glibc 2.28 (and the
-//   libstdc++ of that generation), macOS 11, and the right Windows CPU.
+// - it is built for the target's CPU (on Linux, as a 64-bit little-endian ELF);
+// - it runs on the oldest systems PotluckDB supports: macOS 11, and on Linux
+//   - it needs only libraries every such system has: on glibc, glibc's own,
+//     libstdc++ and libgcc_s; on musl, musl's C library alone (libstdc++ and
+//     libgcc are linked in);
+//   - on glibc, every symbol version it needs is one this check knows, and at
+//     most glibc 2.28 and the libstdc++ and libgcc_s of that generation
+//     (AlmaLinux 8's); on musl, which has no symbol versions, it needs none.
 //
 // Usage: node scripts/check-binary.js [--target <target>] [<file>]
 // (default: this machine's target and prebuilds/<target>/potluckdb.node)
@@ -15,7 +21,16 @@ const { execFileSync } = require('child_process');
 const { TARGETS, currentTarget } = require('../lib/targets');
 
 const NODE_API_EXPORTS = ['napi_register_module_v1', 'node_api_module_get_api_version_v1'];
-const MAX = { GLIBC: '2.28', GLIBCXX: '3.4.25', CXXABI: '1.3.11', macos: '11.0' };
+// GCC: the newest version AlmaLinux 8's libgcc_s.so.1 has, on x64 and arm64.
+const MAX = { GLIBC: '2.28', GLIBCXX: '3.4.25', CXXABI: '1.3.11', GCC: '7.0.0', macos: '11.0' };
+// Node.js itself needs libstdc++ and libgcc_s, so every system it runs on has them.
+const GLIBC_LIBRARIES = ['libc.so.6', 'libm.so.6', 'libpthread.so.0', 'libdl.so.2', 'libstdc++.so.6', 'libgcc_s.so.1'];
+const LIBRARIES = {
+	'linux-x64-gnu': [...GLIBC_LIBRARIES, 'ld-linux-x86-64.so.2'],
+	'linux-arm64-gnu': [...GLIBC_LIBRARIES, 'ld-linux-aarch64.so.1'],
+	'linux-x64-musl': ['libc.musl-x86_64.so.1'],
+	'linux-arm64-musl': ['libc.musl-aarch64.so.1'],
+};
 
 function run(command, args) {
 	return execFileSync(command, args, { encoding: 'utf8', maxBuffer: 64 << 20 });
@@ -60,26 +75,50 @@ function peInfo(file) {
 	return { names, machine: { 0x8664: 'x64', 0xaa64: 'arm64' }[machine] || `0x${machine.toString(16)}` };
 }
 
+// CPU of a Linux shared library, read from its ELF header: 64-bit (class 2),
+// little-endian (data 1), and e_machine.
+function elfCpu(file) {
+	const b = fs.readFileSync(file);
+	if (b.readUInt32BE(0) !== 0x7f454c46) throw new Error(`${file} is not an ELF file`);
+	if (b[4] !== 2 || b[5] !== 1) return `ELF class ${b[4]}, data ${b[5]}`;
+	const machine = b.readUInt16LE(18);
+	return { 62: 'x64', 183: 'arm64' }[machine] || `ELF machine ${machine}`;
+}
+
 function check(file, target) {
 	const t = TARGETS[target];
 	const problems = [];
 	let exported;
 	if (t.os === 'linux') {
+		const cpu = elfCpu(file);
+		if (cpu !== t.cpu) problems.push(`built for ${cpu}, not ${t.cpu}`);
 		exported = run('nm', ['-D', '--defined-only', file]).split('\n').map(l => l.trim().split(/\s+/).pop()).filter(Boolean);
-		// The versions it needs, from the version references objdump -p lists
-		// under each library. GCC's libgcc_s.so.1 names some of its own symbols
-		// GLIBC_2.0 (on arm64, even on musl), so its versions are not glibc's.
-		const needs = {};
+		// The libraries it needs (NEEDED) and the versions it needs from each:
+		// the version references objdump -p lists under each library.
+		const libraries = [];
+		const refs = [];
 		let from = '';
 		for (const line of run('objdump', ['-p', file]).split('\n')) {
+			const needed = line.match(/^\s+NEEDED\s+(\S+)/);
+			if (needed) libraries.push(needed[1]);
 			const library = line.match(/^\s+required from (\S+):/);
 			if (library || /^\S/.test(line)) from = library ? library[1] : '';
-			const [, name, version] = (from !== 'libgcc_s.so.1' && line.match(/\b(GLIBC|GLIBCXX|CXXABI)_(\d+(?:\.\d+)*)\s*$/)) || [];
-			if (name && (!needs[name] || compareVersions(version, needs[name]) > 0)) needs[name] = version;
+			else if (from && line.trim()) refs.push([from, line.trim().split(/\s+/).pop()]);
 		}
-		console.log(`needs: ${Object.entries(needs).map(([n, v]) => `${n} ${v}`).join(', ') || 'no versioned glibc symbols'}`);
-		if (t.libc === 'musl' && needs.GLIBC) problems.push(`musl build needs glibc ${needs.GLIBC}`);
-		// libstdc++ (GLIBCXX, CXXABI) has the same versions on glibc and musl.
+		const extra = libraries.filter(l => !LIBRARIES[target].includes(l));
+		if (extra.length) problems.push(`needs libraries that ${target} systems may lack: ${extra.join(', ')}`);
+		if (t.libc === 'musl' && refs.length) problems.push(`musl build needs ${refs.length} symbol versions (musl has none), e.g. ${refs.slice(0, 5).map(([l, v]) => `${v} from ${l}`).join(', ')}`);
+		const needs = {};
+		for (const [library, version] of refs) {
+			const [, name, number] = version.match(/^(GLIBC|GLIBCXX|CXXABI|GCC)_(\d+(?:\.\d+)*)$/) || [];
+			// GCC's versions are libgcc_s.so.1's, which has only those and, on
+			// arm64, GLIBC_2.0 for its frame registration (crtbeginS.o may use it).
+			const libgcc = library === 'libgcc_s.so.1';
+			if (libgcc && version === 'GLIBC_2.0' && t.cpu === 'arm64') continue;
+			if (!name || (name === 'GCC') !== libgcc) problems.push(`needs ${version} from ${library}, a version this check doesn't know`);
+			else if (!needs[name] || compareVersions(number, needs[name]) > 0) needs[name] = number;
+		}
+		console.log(`needs: ${[...libraries, ...Object.entries(needs).map(([n, v]) => `${n} ${v}`)].join(', ')}`);
 		for (const [name, version] of Object.entries(needs)) {
 			if (compareVersions(version, MAX[name]) > 0) problems.push(`needs ${name} ${version}, more than ${MAX[name]}`);
 		}

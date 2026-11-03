@@ -40,7 +40,7 @@ nothing is compiled.
 | Platform | Package | Needs |
 | --- | --- | --- |
 | Linux x64, arm64 | `@potluckdb/linux-x64-gnu`, `@potluckdb/linux-arm64-gnu` | glibc 2.28 or later |
-| Linux x64, arm64 (Alpine) | `@potluckdb/linux-x64-musl`, `@potluckdb/linux-arm64-musl` | musl |
+| Linux x64, arm64 (Alpine) | `@potluckdb/linux-x64-musl`, `@potluckdb/linux-arm64-musl` | musl's C library only (libstdc++ and libgcc are built in) |
 | macOS Apple silicon, Intel | `@potluckdb/macos-arm64`, `@potluckdb/macos-x64` | macOS 11 or later |
 | Windows x64 | `@potluckdb/windows-x64` | Windows 10 or later |
 | Windows ARM64 | `@potluckdb/windows-arm64` | Windows 11 |
