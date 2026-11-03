@@ -1,10 +1,12 @@
 # Builds potluckdb.node, the Node-API addon, linked statically with PotluckDB's
 # SQLite library, and test_extension.node, a loadable extension for the tests.
 # Run it through scripts/build.js, which unpacks a core archive and passes its
-# folder as potluckdb_core. Nothing is compiled when users install the package.
+# folder as potluckdb_core, and on Linux the target's C library as potluckdb_libc
+# (glibc or musl). Nothing is compiled when users install the package.
 {
   'variables': {
     'potluckdb_core%': '',
+    'potluckdb_libc%': '',
   },
   'target_defaults': {
     'default_configuration': 'Release',
@@ -72,6 +74,12 @@
         ['OS=="linux"', {
           'libraries': ['<(potluckdb_core)/lib/static/libsqlite3.a', '-lpthread', '-ldl', '-lm'],
           'ldflags': ['-Wl,-Bsymbolic', '-Wl,--exclude-libs,ALL', '-Wl,--version-script=<(module_root_dir)/src/exports.map'],
+        }],
+        # On musl, libstdc++ and libgcc are linked in: a musl system's libstdc++
+        # may be older than the build's (Alpine 3.18 has GCC 12's) and has no
+        # symbol versions to check.
+        ['OS=="linux" and potluckdb_libc=="musl"', {
+          'ldflags': ['-static-libstdc++', '-static-libgcc'],
         }],
       ],
     },

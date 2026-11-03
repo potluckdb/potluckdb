@@ -6,7 +6,7 @@ description: Use PotluckDB from Node.js, in place of better-sqlite3.
 `potluckdb` for Node.js is a drop-in replacement for
 [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) that runs on
 PotluckDB's build of SQLite, on Node.js 20 and later, on Linux (glibc 2.28+
-and musl), macOS 11+ and Windows, x64 and ARM64.
+and musl 1.2.5+), macOS 11+ and Windows, x64 and ARM64.
 
 ```js
 const Database = require('potluckdb');   // was: require('better-sqlite3')
