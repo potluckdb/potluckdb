@@ -272,9 +272,11 @@ class SymbolTests(unittest.TestCase):
                                   text=True, check=True).stdout
         undefined = subprocess.run(["nm", "-u", str(self.extension())], capture_output=True,
                                    text=True, check=True).stdout
-        self.assertEqual([l for l in exported.splitlines() if "sqlite3_" in l], [])
         self.assertEqual([l for l in undefined.splitlines() if "sqlite3_" in l], [])
-        self.assertIn("_PyInit__sqlite3", [l.split()[-1] for l in exported.splitlines()])
+        names = sorted({l.split()[-1] for l in exported.splitlines() if l.strip()})
+        others = [n for n in names if n != "_PyInit__sqlite3"]
+        self.assertEqual(others, [], "the extension exports more than its init function")
+        self.assertIn("_PyInit__sqlite3", names)
 
     @unittest.skipUnless(sys.platform == "win32", "Windows only")
     def test_exports_and_imports_windows(self):
