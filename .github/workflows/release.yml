@@ -103,6 +103,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Release notes, tag and publish
+        id: publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -152,8 +153,9 @@ jobs:
         run: |
           gh workflow run go.yml -R "$GITHUB_REPOSITORY" -f version="$VERSION" -f publish=true
       - name: Publish the docs
-        # docs.yml deploys the release's docs/ to docs.potluckdb.com.
-        if: vars.DOCS_PUBLISHING == 'true'
+        # docs.yml deploys the release's docs/ to docs.potluckdb.com. Runs
+        # even if starting a registry workflow above failed: the release is out.
+        if: ${{ !cancelled() && steps.publish.outcome == 'success' && vars.DOCS_PUBLISHING == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run docs.yml -R "$GITHUB_REPOSITORY" -f version="$VERSION"
