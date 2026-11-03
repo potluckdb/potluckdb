@@ -3,7 +3,8 @@
 # and CPython's sqlite3 test suite.
 #
 #   pull request / push touching python/   tooling tests, plus Linux x64 wheels
-#                                          for Python 3.10 and 3.14
+#                                          for Python 3.10 and 3.14 and a macOS
+#                                          arm64 wheel for Python 3.14
 #   nightly, by hand, or called            all 8 platforms x 5 Python versions
 #   with publish                           the same, then upload to PyPI
 #
@@ -88,17 +89,22 @@ jobs:
           fi
 
   quick:
-    # Every change under python/: Linux x64 with the oldest and newest Python.
-    # setup-python's CPython uses the system's libsqlite3, so the isolation
-    # tests also cover "another SQLite is already loaded in the process".
+    # Every change under python/: Linux x64 with the oldest and newest Python,
+    # and macOS arm64 with the newest, as macOS links the extension
+    # differently. On Linux, setup-python's CPython uses the system's
+    # libsqlite3, so the isolation tests also cover "another SQLite is
+    # already loaded in the process".
     needs: core
     if: needs.core.outputs.released == 'true' && !inputs.version && (github.event_name == 'pull_request' || github.event_name == 'push')
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.10", "3.14"]
+        include:
+          - { os: ubuntu-24.04, python: "3.10" }
+          - { os: ubuntu-24.04, python: "3.14" }
+          - { os: macos-15, python: "3.14" }
     env:
       POTLUCKDB_CORE_VERSION: ${{ needs.core.outputs.version }}
     steps:

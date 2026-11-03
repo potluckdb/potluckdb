@@ -66,6 +66,11 @@ class BuildExt(build_ext):
             if core["target"].startswith("linux-"):
                 ext.libraries += ["pthread", "dl", "m"]
                 ext.extra_link_args += ["-Wl,--exclude-libs,ALL"]
+            if core["target"].startswith("macos-"):
+                # Export the init function only: a second line of defence for
+                # archives that leave a symbol visible (0.8.0-dev.3 did).
+                init = "PyInit_" + ext.name.rsplit(".", 1)[-1]
+                ext.extra_link_args += [f"-Wl,-exported_symbol,_{init}"]
         super().build_extensions()
 
 

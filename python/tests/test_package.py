@@ -263,8 +263,13 @@ class SymbolTests(unittest.TestCase):
                                  text=True, check=True).stdout
         sqlite = [line for line in dynamic.splitlines() if "sqlite3_" in line or "potluckdb_" in line]
         self.assertEqual(sqlite, [], "SQLite symbols in the extension's dynamic symbol table")
-        defined = [line.split()[-1] for line in dynamic.splitlines() if " T " in line]
-        self.assertIn("PyInit__sqlite3", defined)
+        defined = subprocess.run(["nm", "-D", "--defined-only", str(self.extension())], capture_output=True,
+                                 text=True, check=True).stdout
+        names = sorted({l.split()[-1] for l in defined.splitlines() if l.strip()})
+        # _init and _fini: the C runtime's (musl toolchains export them).
+        others = [n for n in names if n not in ("PyInit__sqlite3", "_init", "_fini")]
+        self.assertEqual(others, [], "the extension exports more than its init function")
+        self.assertIn("PyInit__sqlite3", names)
 
     @unittest.skipUnless(sys.platform == "darwin" and shutil.which("nm"), "needs nm on macOS")
     def test_no_sqlite_symbols_macos(self):
@@ -272,9 +277,11 @@ class SymbolTests(unittest.TestCase):
                                   text=True, check=True).stdout
         undefined = subprocess.run(["nm", "-u", str(self.extension())], capture_output=True,
                                    text=True, check=True).stdout
-        self.assertEqual([l for l in exported.splitlines() if "sqlite3_" in l], [])
         self.assertEqual([l for l in undefined.splitlines() if "sqlite3_" in l], [])
-        self.assertIn("_PyInit__sqlite3", [l.split()[-1] for l in exported.splitlines()])
+        names = sorted({l.split()[-1] for l in exported.splitlines() if l.strip()})
+        others = [n for n in names if n != "_PyInit__sqlite3"]
+        self.assertEqual(others, [], "the extension exports more than its init function")
+        self.assertIn("_PyInit__sqlite3", names)
 
     @unittest.skipUnless(sys.platform == "win32", "Windows only")
     def test_exports_and_imports_windows(self):
