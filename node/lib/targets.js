@@ -8,8 +8,8 @@ const fs = require('fs');
 const TARGETS = {
 	'linux-x64-gnu': { os: 'linux', cpu: 'x64', libc: 'glibc', entrypoint: 'linux-x64', runsOn: 'glibc 2.28 or later' },
 	'linux-arm64-gnu': { os: 'linux', cpu: 'arm64', libc: 'glibc', entrypoint: 'linux-arm64', runsOn: 'glibc 2.28 or later' },
-	'linux-x64-musl': { os: 'linux', cpu: 'x64', libc: 'musl', entrypoint: 'linuxmusl-x64', runsOn: 'musl systems such as Alpine' },
-	'linux-arm64-musl': { os: 'linux', cpu: 'arm64', libc: 'musl', entrypoint: 'linuxmusl-arm64', runsOn: 'musl systems such as Alpine' },
+	'linux-x64-musl': { os: 'linux', cpu: 'x64', libc: 'musl', entrypoint: 'linuxmusl-x64', runsOn: 'musl 1.2.5 or later, such as Alpine 3.20 or later' },
+	'linux-arm64-musl': { os: 'linux', cpu: 'arm64', libc: 'musl', entrypoint: 'linuxmusl-arm64', runsOn: 'musl 1.2.5 or later, such as Alpine 3.20 or later' },
 	'macos-arm64': { os: 'darwin', cpu: 'arm64', entrypoint: 'darwin-arm64', runsOn: 'macOS 11 or later' },
 	'macos-x64': { os: 'darwin', cpu: 'x64', entrypoint: 'darwin-x64', runsOn: 'macOS 11 or later' },
 	'windows-x64': { os: 'win32', cpu: 'x64', entrypoint: 'win32-x64', runsOn: 'Windows 10 or later' },

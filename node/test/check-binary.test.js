@@ -1,8 +1,8 @@
 'use strict';
 // scripts/check-binary.js on this machine's build: it passes for this
-// machine's target, and finds the other CPU, the other C library and a
-// patched-in import it must reject (on glibc a symbol version it doesn't know,
-// on musl a symbol musl's C library doesn't define). Linux only.
+// machine's target, and finds the other CPU, the other C library, a
+// patched-in glibc version it doesn't know, and a symbol needed from no listed
+// library (in a library compiled with this machine's cc). Linux only.
 const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
@@ -63,13 +63,26 @@ test('finds a glibc version it does not know', { skip: skip || (TARGETS[target].
 	assert.match(r.out, new RegExp(`^problem: needs ${patched} from \\S+, a version this check doesn't know$`, 'm'));
 });
 
-test('finds a symbol musl does not define', { skip: skip || (TARGETS[target].libc !== 'musl' && 'musl only') }, () => {
-	// One C library import renamed to a C++ name of the same length, in the dynamic string table.
-	const b = fs.readFileSync(file, 'latin1');
-	const imports = execFileSync('nm', ['-D', '--undefined-only', file], { encoding: 'utf8' }).match(/(?<= U )[a-z]\w{3,}$/gm);
-	const name = imports.find(n => b.includes(`\0${n}\0`));
-	const patched = `_Z${'X'.repeat(name.length - 2)}`;
-	const r = checkPatched(b.indexOf(`\0${name}\0`) + 1, patched);
-	assert.strictEqual(r.status, 1, r.out);
-	assert.match(r.out, new RegExp(`^problem: needs 1 symbols musl's C library doesn't define, e\\.g\\. ${patched}$`, 'm'));
+test('finds a symbol no listed library gives', { skip: skip || (spawnSync('cc', ['--version']).status !== 0 && 'no cc') }, () => {
+	// A library that needs strlen (the C library's), __dynamic_cast (libstdc++'s,
+	// not linked) and a weak symbol nothing defines, which may stay.
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'potluckdb-check-'));
+	try {
+		fs.writeFileSync(path.join(dir, 'lib.c'), [
+			'#include <string.h>',
+			'void *__dynamic_cast(const void *, const void *, const void *, long);',
+			'void potluckdb_absent(void) __attribute__((weak));',
+			'void *napi_register_module_v1(void *env, void *exports) {',
+			'\tif (potluckdb_absent) potluckdb_absent();',
+			'\treturn __dynamic_cast(exports, env, env, strlen(exports));',
+			'}',
+		].join('\n'));
+		execFileSync('cc', ['-shared', '-fPIC', '-O0', '-o', path.join(dir, 'lib.node'), path.join(dir, 'lib.c')]);
+		const r = check(target, path.join(dir, 'lib.node'));
+		assert.strictEqual(r.status, 1, r.out);
+		const line = TARGETS[target].libc === 'musl' ? "needs 1 symbols musl's C library doesn't define" : 'needs 1 unversioned symbols';
+		assert.match(r.out, new RegExp(`^problem: ${line}, e\\.g\\. __dynamic_cast$`, 'm'));
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
 });

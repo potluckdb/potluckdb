@@ -10,7 +10,8 @@
 //     libgcc are linked in);
 //   - every symbol it needs (bar weak ones) is Node-API's, from Node.js, or
 //     comes from those libraries: on glibc it has a symbol version, on musl
-//     musl's C library defines it (so on musl, the check needs a musl system);
+//     musl 1.2.5's C library defines it (so on musl, the check needs a musl
+//     system with musl 1.2.5 or older: musl only adds symbols);
 //   - on glibc, every symbol version it needs is one this check knows, and at
 //     most glibc 2.28 and the libstdc++ and libgcc_s of that generation
 //     (AlmaLinux 8's); on musl, which has no symbol versions, it needs none.
@@ -20,12 +21,13 @@
 // Needs readelf and objdump on Linux, nm and otool on macOS; nothing on Windows.
 const fs = require('fs');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 const { TARGETS, currentTarget } = require('../lib/targets');
 
 const NODE_API_EXPORTS = ['napi_register_module_v1', 'node_api_module_get_api_version_v1'];
 // GCC: the newest version AlmaLinux 8's libgcc_s.so.1 has, on x64 and arm64.
-const MAX = { GLIBC: '2.28', GLIBCXX: '3.4.25', CXXABI: '1.3.11', GCC: '7.0.0', macos: '11.0' };
+// musl: Alpine 3.20's.
+const MAX = { GLIBC: '2.28', GLIBCXX: '3.4.25', CXXABI: '1.3.11', GCC: '7.0.0', musl: '1.2.5', macos: '11.0' };
 // Node.js itself needs libstdc++ and libgcc_s, so every system it runs on has them.
 const GLIBC_LIBRARIES = ['libc.so.6', 'libm.so.6', 'libpthread.so.0', 'libdl.so.2', 'libstdc++.so.6', 'libgcc_s.so.1'];
 const LIBRARIES = {
@@ -156,6 +158,13 @@ function check(file, target) {
 		} else if (!fs.existsSync(musl)) {
 			problems.push(`can't check the symbols it needs without ${musl}: run this check on a musl system`);
 		} else {
+			// musl's C library is its dynamic loader too: run alone, it prints
+			// its version and exits 1.
+			const version = ((spawnSync(musl, [], { encoding: 'utf8' }).stderr || '').match(/^Version (\S+)$/m) || [])[1];
+			console.log(`musl: ${version}`);
+			const why = `so the symbols checked against it might be missing from musl ${MAX.musl}`;
+			if (!version) problems.push(`can't read the version of ${musl}, ${why}`);
+			else if (compareVersions(version, MAX.musl) > 0) problems.push(`this system has musl ${version}, newer than ${MAX.musl}, ${why}`);
 			const defined = new Set(dynamicSymbols(musl).filter(s => s.defined).map(s => s.name));
 			const missing = imports.filter(s => !defined.has(s.name)).map(s => s.name);
 			if (missing.length) problems.push(`needs ${missing.length} symbols musl's C library doesn't define, e.g. ${missing.slice(0, 5).join(', ')}`);
