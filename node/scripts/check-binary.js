@@ -163,7 +163,8 @@ function check(file, target) {
 			const version = ((spawnSync(musl, [], { encoding: 'utf8' }).stderr || '').match(/^Version (\S+)$/m) || [])[1];
 			console.log(`musl: ${version}`);
 			const why = `so the symbols checked against it might be missing from musl ${MAX.musl}`;
-			if (!version) problems.push(`can't read the version of ${musl}, ${why}`);
+			// Numbers only: compareVersions would read "1.2.6_git..." as 1.2.0.
+			if (!/^\d+(\.\d+)*$/.test(version)) problems.push(`can't read the version of ${musl}${version ? ` ("${version}")` : ''}, ${why}`);
 			else if (compareVersions(version, MAX.musl) > 0) problems.push(`this system has musl ${version}, newer than ${MAX.musl}, ${why}`);
 			const defined = new Set(dynamicSymbols(musl).filter(s => s.defined).map(s => s.name));
 			const missing = imports.filter(s => !defined.has(s.name)).map(s => s.name);
