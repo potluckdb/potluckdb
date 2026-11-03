@@ -21,8 +21,6 @@ few cases listed in the package's README.
 
 ## Good to know
 
-- Databases sync too: `potluckdb attach app.db s3://my-bucket/app` once,
-  with no code change ([Sync a database](/guides/sync-a-database/)). One
-  device writes at a time for now.
+- Databases sync in a later pre-release; for now it is SQLite with no sync.
 - One prebuilt binary per platform works on every Node.js version from 20 on
   (it uses Node-API), with no compiling at install time.

@@ -16,9 +16,10 @@ hero:
 
 import { Aside, Card, CardGrid } from '@astrojs/starlight/components';
 
-<Aside type="caution" title="Pre-release">
-The 0.8 series is built in the open, with a new pre-release every few hours.
-Pre-releases sync folders and, with one writing device at a time, databases: see [what works today](/start/status/).
+<Aside type="caution" title="Pre-release: no sync yet">
+The 0.8 series is built in the open. The current pre-releases are the SQLite
+drop-in library and its language packages; nothing syncs yet. Sync comes in
+later releases: see [what works today](/start/status/).
 Not for production use before 1.0.
 </Aside>
 
@@ -28,11 +29,11 @@ Not for production use before 1.0.
     ORMs keep working.
   </Card>
   <Card title="Local and fast" icon="rocket">
-    Reads and writes stay on the device. Changes reach your other devices in
-    about half a second.
+    Reads and writes stay on the device. Sync, coming in later releases, will
+    work in the background.
   </Card>
   <Card title="Your bucket" icon="seti:db">
-    Sync goes through S3, Cloudflare R2, Google Cloud Storage, Azure Blob or
-    a folder. There is no PotluckDB server.
+    Sync will go through S3, Cloudflare R2, Google Cloud Storage, Azure Blob
+    or a folder. There is no PotluckDB server.
   </Card>
 </CardGrid>

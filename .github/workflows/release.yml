@@ -81,7 +81,6 @@ jobs:
           EXT: ${{ runner.os == 'Windows' && 'zip' || 'tar.gz' }}
         run: |
           $PYTHON tests/release/smoke.py dist/potluckdb-sqlite-"$VERSION"-${{ matrix.target }}.$EXT "$VERSION"
-          $PYTHON tests/release/cli_smoke.py dist/potluckdb-cli-"$VERSION"-${{ matrix.target }}.$EXT "$VERSION"
       - name: Run a query (${{ matrix.target }}, in ${{ matrix.image }})
         if: ${{ matrix.image }}
         run: |
@@ -90,8 +89,7 @@ jobs:
             if command -v apk > /dev/null; then apk add -q python3 > /dev/null; else
               for i in 1 2 3; do timeout 300 dnf -q -y --setopt=timeout=30 install python3 > /dev/null && break
                 [ "$i" = 3 ] && exit 1; echo "dnf stalled or failed; trying again"; done; fi
-            python3 tests/release/smoke.py dist/potluckdb-sqlite-"$VERSION"-${{ matrix.target }}.tar.gz "$VERSION"
-            python3 tests/release/cli_smoke.py dist/potluckdb-cli-"$VERSION"-${{ matrix.target }}.tar.gz "$VERSION"'
+            python3 tests/release/smoke.py dist/potluckdb-sqlite-"$VERSION"-${{ matrix.target }}.tar.gz "$VERSION"'
 
   finalize:
     needs: test
