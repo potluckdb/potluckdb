@@ -66,9 +66,16 @@ function check(file, target) {
 	let exported;
 	if (t.os === 'linux') {
 		exported = run('nm', ['-D', '--defined-only', file]).split('\n').map(l => l.trim().split(/\s+/).pop()).filter(Boolean);
+		// The versions it needs, from the version references objdump -p lists
+		// under each library. GCC's libgcc_s.so.1 names some of its own symbols
+		// GLIBC_2.0 (on arm64, even on musl), so its versions are not glibc's.
 		const needs = {};
-		for (const [, name, version] of run('objdump', ['-T', file]).matchAll(/\b(GLIBC|GLIBCXX|CXXABI)_(\d+(?:\.\d+)*)\b/g)) {
-			if (!needs[name] || compareVersions(version, needs[name]) > 0) needs[name] = version;
+		let from = '';
+		for (const line of run('objdump', ['-p', file]).split('\n')) {
+			const library = line.match(/^\s+required from (\S+):/);
+			if (library || /^\S/.test(line)) from = library ? library[1] : '';
+			const [, name, version] = (from !== 'libgcc_s.so.1' && line.match(/\b(GLIBC|GLIBCXX|CXXABI)_(\d+(?:\.\d+)*)\s*$/)) || [];
+			if (name && (!needs[name] || compareVersions(version, needs[name]) > 0)) needs[name] = version;
 		}
 		console.log(`needs: ${Object.entries(needs).map(([n, v]) => `${n} ${v}`).join(', ') || 'no versioned glibc symbols'}`);
 		if (t.libc === 'musl' && needs.GLIBC) problems.push(`musl build needs glibc ${needs.GLIBC}`);
