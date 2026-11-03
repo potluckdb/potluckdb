@@ -7,14 +7,17 @@
 // - it runs on the oldest systems PotluckDB supports: macOS 11, and on Linux
 //   - it needs only libraries every such system has: on glibc, glibc's own,
 //     libstdc++ and libgcc_s; on musl, musl's C library alone (libstdc++ and
-//     libgcc are linked in, so it needs none of their symbols);
+//     libgcc are linked in);
+//   - every symbol it needs (bar weak ones) is Node-API's, from Node.js, or
+//     comes from those libraries: on glibc it has a symbol version, on musl
+//     musl's C library defines it (so on musl, the check needs a musl system);
 //   - on glibc, every symbol version it needs is one this check knows, and at
 //     most glibc 2.28 and the libstdc++ and libgcc_s of that generation
 //     (AlmaLinux 8's); on musl, which has no symbol versions, it needs none.
 //
 // Usage: node scripts/check-binary.js [--target <target>] [<file>]
 // (default: this machine's target and prebuilds/<target>/potluckdb.node)
-// Needs nm and objdump on Linux, nm and otool on macOS; nothing on Windows.
+// Needs readelf and objdump on Linux, nm and otool on macOS; nothing on Windows.
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -31,8 +34,6 @@ const LIBRARIES = {
 	'linux-x64-musl': ['libc.musl-x86_64.so.1'],
 	'linux-arm64-musl': ['libc.musl-aarch64.so.1'],
 };
-// The C++ runtime's names that musl's libc itself defines (1.2.5, x64 and arm64).
-const MUSL_CXX = ['__cxa_atexit', '__cxa_finalize'];
 
 // In the C locale: binutils translates the headings parsed below.
 function run(command, args) {
@@ -88,6 +89,17 @@ function elfCpu(file) {
 	return { 62: 'x64', 183: 'arm64' }[machine] || `ELF machine ${machine}`;
 }
 
+// The non-local dynamic symbols of a Linux shared library, from readelf's
+// "Num: Value Size Type Bind Vis Ndx Name[@version]" lines.
+function dynamicSymbols(file) {
+	const symbols = [];
+	for (const line of run('readelf', ['--dyn-syms', '-W', file]).split('\n')) {
+		const [, bind, ndx, name, version] = line.match(/^\s*\d+:\s+\S+\s+\S+\s+\S+\s+(\S+)\s+\S+(?: \[[^\]]*\])?\s+(\S+)\s+([^\s@]+)(?:@+(\S+))?/) || [];
+		if (bind && bind !== 'LOCAL') symbols.push({ name, version, defined: ndx !== 'UND', weak: bind === 'WEAK' });
+	}
+	return symbols;
+}
+
 function check(file, target) {
 	const t = TARGETS[target];
 	const problems = [];
@@ -95,7 +107,8 @@ function check(file, target) {
 	if (t.os === 'linux') {
 		const cpu = elfCpu(file);
 		if (cpu !== t.cpu) problems.push(`built for ${cpu}, not ${t.cpu}`);
-		exported = run('nm', ['-D', '--defined-only', file]).split('\n').map(l => l.trim().split(/\s+/).pop()).filter(Boolean);
+		const symbols = dynamicSymbols(file);
+		exported = symbols.filter(s => s.defined).map(s => s.name);
 		// The libraries it needs (NEEDED) and the versions it needs from each:
 		// the version references objdump -p lists under each library.
 		const libraries = [];
@@ -130,13 +143,22 @@ function check(file, target) {
 		for (const [name, version] of Object.entries(needs)) {
 			if (compareVersions(version, MAX[name]) > 0) problems.push(`needs ${name} ${version}, more than ${MAX[name]}`);
 		}
-		if (t.libc === 'musl') {
-			// The C++ runtime and unwinder must be linked in, not left to the
-			// process's libstdc++ (Node's own, where it was built). Weak imports may
-			// stay: they are null when absent, and their users test for that.
-			const imports = (run('nm', ['-D', '--undefined-only', file]).match(/(?<= U )\S+$/gm) || []).map(n => n.replace(/@.*/, ''));
-			const cxx = imports.filter(n => /^(_Z|_Unwind_|__cxa_|__gxx_|__gcc_personality)/.test(n) && !MUSL_CXX.includes(n));
-			if (cxx.length) problems.push(`needs ${cxx.length} C++ runtime symbols musl lacks, e.g. ${cxx.slice(0, 5).join(', ')}`);
+		// Who gives each symbol it needs, bar Node-API's (Node.js does): on glibc a
+		// library that versions it, as glibc, libstdc++ and libgcc_s do all theirs
+		// (an unversioned one binds to whatever the process has); on musl, musl's
+		// C library. Weak ones may stay: they are null when absent, and their
+		// users test for that.
+		const imports = symbols.filter(s => !s.defined && !s.weak && !/^(napi|node_api)_/.test(s.name));
+		const musl = `/lib/${libc}`;
+		if (t.libc === 'glibc') {
+			const unversioned = imports.filter(s => !s.version).map(s => s.name);
+			if (unversioned.length) problems.push(`needs ${unversioned.length} unversioned symbols, e.g. ${unversioned.slice(0, 5).join(', ')}`);
+		} else if (!fs.existsSync(musl)) {
+			problems.push(`can't check the symbols it needs without ${musl}: run this check on a musl system`);
+		} else {
+			const defined = new Set(dynamicSymbols(musl).filter(s => s.defined).map(s => s.name));
+			const missing = imports.filter(s => !defined.has(s.name)).map(s => s.name);
+			if (missing.length) problems.push(`needs ${missing.length} symbols musl's C library doesn't define, e.g. ${missing.slice(0, 5).join(', ')}`);
 		}
 	} else if (t.os === 'darwin') {
 		exported = run('nm', ['-gU', file]).split('\n').map(l => l.trim().split(/\s+/).pop()).filter(Boolean).map(s => s.replace(/^_/, ''));

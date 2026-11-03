@@ -2,7 +2,7 @@
 // scripts/check-binary.js on this machine's build: it passes for this
 // machine's target, and finds the other CPU, the other C library and a
 // patched-in import it must reject (on glibc a symbol version it doesn't know,
-// on musl a C++ runtime symbol). Linux only.
+// on musl a symbol musl's C library doesn't define). Linux only.
 const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
@@ -63,7 +63,7 @@ test('finds a glibc version it does not know', { skip: skip || (TARGETS[target].
 	assert.match(r.out, new RegExp(`^problem: needs ${patched} from \\S+, a version this check doesn't know$`, 'm'));
 });
 
-test('finds a C++ runtime symbol musl lacks', { skip: skip || (TARGETS[target].libc !== 'musl' && 'musl only') }, () => {
+test('finds a symbol musl does not define', { skip: skip || (TARGETS[target].libc !== 'musl' && 'musl only') }, () => {
 	// One C library import renamed to a C++ name of the same length, in the dynamic string table.
 	const b = fs.readFileSync(file, 'latin1');
 	const imports = execFileSync('nm', ['-D', '--undefined-only', file], { encoding: 'utf8' }).match(/(?<= U )[a-z]\w{3,}$/gm);
@@ -71,5 +71,5 @@ test('finds a C++ runtime symbol musl lacks', { skip: skip || (TARGETS[target].l
 	const patched = `_Z${'X'.repeat(name.length - 2)}`;
 	const r = checkPatched(b.indexOf(`\0${name}\0`) + 1, patched);
 	assert.strictEqual(r.status, 1, r.out);
-	assert.match(r.out, new RegExp(`^problem: needs 1 C\\+\\+ runtime symbols musl lacks, e\\.g\\. ${patched}$`, 'm'));
+	assert.match(r.out, new RegExp(`^problem: needs 1 symbols musl's C library doesn't define, e\\.g\\. ${patched}$`, 'm'));
 });
