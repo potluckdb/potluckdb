@@ -13,9 +13,6 @@
         'ExceptionHandling': 1,
       },
     },
-    'xcode_settings': {
-      'MACOSX_DEPLOYMENT_TARGET': '11.0',
-    },
     'configurations': {
       'Debug': {
         'defines!': ['NDEBUG'],
@@ -45,6 +42,9 @@
       'defines': ['NAPI_VERSION=8', 'NAPI_DISABLE_CPP_EXCEPTIONS', 'NODE_API_SWALLOW_UNTHROWABLE_EXCEPTIONS'],
       'cflags_cc': ['-std=c++20', '-fvisibility=hidden', '-fvisibility-inlines-hidden'],
       'xcode_settings': {
+        # Set on the target: Node.js's common.gypi sets its own minimum (13.5
+        # in Node.js 24), which replaces one set in target_defaults.
+        'MACOSX_DEPLOYMENT_TARGET': '11.0',
         'CLANG_CXX_LANGUAGE_STANDARD': 'c++20',
         'CLANG_CXX_LIBRARY': 'libc++',
         'GCC_SYMBOLS_PRIVATE_EXTERN': 'YES',
@@ -55,14 +55,19 @@
           'AdditionalOptions': ['/std:c++20'],
         },
       },
-      # The library's symbols are hidden, so the addon exports none of them
-      # and never clashes with another SQLite in the same process.
+      # The addon exports only its Node-API entry points, none of the library's
+      # symbols, so it never clashes with another SQLite in the same process.
       'conditions': [
         ['OS=="win"', {
           'libraries': ['<(potluckdb_core)/lib/static/sqlite3.lib'],
         }],
         ['OS=="mac"', {
           'libraries': ['<(potluckdb_core)/lib/static/libsqlite3.a'],
+          # Like src/exports.map on Linux; needed as the macOS library leaves
+          # one of its symbols, potluckdb_vfs_register, visible.
+          'xcode_settings': {
+            'OTHER_LDFLAGS': ['-Wl,-exported_symbol,_napi_register_module_v1', '-Wl,-exported_symbol,_node_api_module_get_api_version_v1'],
+          },
         }],
         ['OS=="linux"', {
           'libraries': ['<(potluckdb_core)/lib/static/libsqlite3.a', '-lpthread', '-ldl', '-lm'],
