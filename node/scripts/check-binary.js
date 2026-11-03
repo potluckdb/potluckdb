@@ -7,7 +7,7 @@
 // - it runs on the oldest systems PotluckDB supports: macOS 11, and on Linux
 //   - it needs only libraries every such system has: on glibc, glibc's own,
 //     libstdc++ and libgcc_s; on musl, musl's C library alone (libstdc++ and
-//     libgcc are linked in);
+//     libgcc are linked in, so it needs none of their symbols);
 //   - on glibc, every symbol version it needs is one this check knows, and at
 //     most glibc 2.28 and the libstdc++ and libgcc_s of that generation
 //     (AlmaLinux 8's); on musl, which has no symbol versions, it needs none.
@@ -31,9 +31,12 @@ const LIBRARIES = {
 	'linux-x64-musl': ['libc.musl-x86_64.so.1'],
 	'linux-arm64-musl': ['libc.musl-aarch64.so.1'],
 };
+// The C++ runtime's names that musl's libc itself defines (1.2.5, x64 and arm64).
+const MUSL_CXX = ['__cxa_atexit', '__cxa_finalize'];
 
+// In the C locale: binutils translates the headings parsed below.
 function run(command, args) {
-	return execFileSync(command, args, { encoding: 'utf8', maxBuffer: 64 << 20 });
+	return execFileSync(command, args, { encoding: 'utf8', maxBuffer: 64 << 20, env: { ...process.env, LC_ALL: 'C' } });
 }
 
 function compareVersions(a, b) {
@@ -107,6 +110,10 @@ function check(file, target) {
 		}
 		const extra = libraries.filter(l => !LIBRARIES[target].includes(l));
 		if (extra.length) problems.push(`needs libraries that ${target} systems may lack: ${extra.join(', ')}`);
+		// Guards against output this parsing misses: every build needs its C
+		// library and, on glibc, some GLIBC version.
+		const libc = LIBRARIES[target].find(l => l.startsWith('libc.'));
+		if (!libraries.includes(libc)) problems.push(`objdump -p lists no NEEDED ${libc}`);
 		if (t.libc === 'musl' && refs.length) problems.push(`musl build needs ${refs.length} symbol versions (musl has none), e.g. ${refs.slice(0, 5).map(([l, v]) => `${v} from ${l}`).join(', ')}`);
 		const needs = {};
 		for (const [library, version] of refs) {
@@ -118,9 +125,18 @@ function check(file, target) {
 			if (!name || (name === 'GCC') !== libgcc) problems.push(`needs ${version} from ${library}, a version this check doesn't know`);
 			else if (!needs[name] || compareVersions(number, needs[name]) > 0) needs[name] = number;
 		}
+		if (t.libc === 'glibc' && !needs.GLIBC) problems.push('objdump -p lists no GLIBC version');
 		console.log(`needs: ${[...libraries, ...Object.entries(needs).map(([n, v]) => `${n} ${v}`)].join(', ')}`);
 		for (const [name, version] of Object.entries(needs)) {
 			if (compareVersions(version, MAX[name]) > 0) problems.push(`needs ${name} ${version}, more than ${MAX[name]}`);
+		}
+		if (t.libc === 'musl') {
+			// The C++ runtime and unwinder must be linked in, not left to the
+			// process's libstdc++ (Node's own, where it was built). Weak imports may
+			// stay: they are null when absent, and their users test for that.
+			const imports = (run('nm', ['-D', '--undefined-only', file]).match(/(?<= U )\S+$/gm) || []).map(n => n.replace(/@.*/, ''));
+			const cxx = imports.filter(n => /^(_Z|_Unwind_|__cxa_|__gxx_|__gcc_personality)/.test(n) && !MUSL_CXX.includes(n));
+			if (cxx.length) problems.push(`needs ${cxx.length} C++ runtime symbols musl lacks, e.g. ${cxx.slice(0, 5).join(', ')}`);
 		}
 	} else if (t.os === 'darwin') {
 		exported = run('nm', ['-gU', file]).split('\n').map(l => l.trim().split(/\s+/).pop()).filter(Boolean).map(s => s.replace(/^_/, ''));
