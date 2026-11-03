@@ -1,0 +1,116 @@
+# Publishes the docs site (docs/) of a release to https://docs.potluckdb.com
+# (PRD E5): builds docs/ from the release's tag as ci.yml does, then deploys
+# it as the production site of the Cloudflare Pages project potluckdb-docs.
+# release.yml starts it for each release while the repository variable
+# DOCS_PUBLISHING is true; started by hand, it puts back an earlier release's
+# docs.
+#
+# The build runs the tag's code without the Cloudflare token; the deploy job
+# runs only this file and wrangler, on the built files.
+name: docs
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version of a published release, e.g. 0.8.0-dev.3 (or its tag, v0.8.0-dev.3)"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      commit: ${{ steps.commit.outputs.commit }}
+    steps:
+      - name: Check the release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          VERSION=${VERSION#v}
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$ ]]; then
+            echo "::error::The version is not a release version such as 0.8.0-dev.3."
+            exit 1
+          fi
+          if [ "$(gh release view "v$VERSION" -R "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2> /dev/null)" != false ]; then
+            echo "::error::$GITHUB_REPOSITORY has no published release v$VERSION."
+            exit 1
+          fi
+          if ! gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$VERSION" > /dev/null; then
+            echo "::error::$GITHUB_REPOSITORY has no tag v$VERSION."
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/v${{ steps.release.outputs.version }}
+          persist-credentials: false
+      - name: The tag's commit
+        id: commit
+        run: echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        working-directory: docs
+      - run: npm run build
+        working-directory: docs
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: docs-site
+          path: docs/dist/
+          include-hidden-files: true
+          if-no-files-found: error
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment:
+      name: docs
+      url: https://docs.potluckdb.com
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: docs-site
+          path: site
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Deploy to Cloudflare Pages
+        # main is the project's production branch: a deployment to it is
+        # what docs.potluckdb.com serves.
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          COMMIT: ${{ needs.build.outputs.commit }}
+          WRANGLER_SEND_METRICS: "false"
+        run: |
+          npx --yes wrangler@4.151.3 pages deploy site --project-name potluckdb-docs --branch main \
+            --commit-hash "$COMMIT" --commit-message "PotluckDB $VERSION"
+      - name: docs.potluckdb.com serves it
+        run: |
+          for attempt in $(seq 1 12); do
+            if curl -sSf "https://docs.potluckdb.com/llms-full.txt?release=$VERSION" | cmp -s - site/llms-full.txt; then
+              echo "https://docs.potluckdb.com serves the docs of PotluckDB $VERSION" | tee -a "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::Deployed, but docs.potluckdb.com/llms-full.txt still differs from this build after 2 minutes."
+          exit 1
