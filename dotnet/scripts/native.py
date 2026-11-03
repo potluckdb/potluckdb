@@ -14,8 +14,7 @@ The check (also run on its own with --check) makes sure that the library:
 - has PotluckDB's own SONAME (Linux) or install name (macOS);
 - runs on the oldest systems PotluckDB supports: glibc 2.28, macOS 11, and
   needs nothing but the C library (Linux), libSystem (macOS), and parts of
-  Windows itself (Windows: the sync engine also uses its networking and
-  crypto DLLs);
+  Windows itself (Windows);
 - is built for the target's CPU.
 
 Usage: python3 scripts/native.py --target <target> [--version <version>]
@@ -40,12 +39,13 @@ from targets import TARGETS, library_name  # noqa: E402
 LOOKUP = "potluckdb_dotnet_symbol"
 MIN_GLIBC = "2.28"
 MIN_MACOS = "11.0"
-# The C library, and the dynamic loader itself (the sync engine's thread-local
-# data uses __tls_get_addr, which it provides).
+# The C library, and the dynamic loader itself (0.8.0-dev.1 to dev.3's sync
+# engine needed it for thread-local data, through __tls_get_addr).
 GLIBC_NEEDS = {"libc.so.6", "libm.so.6", "libdl.so.2", "libpthread.so.0",
                "ld-linux-x86-64.so.2", "ld-linux-aarch64.so.1"}
-# What the library may load on Windows: Windows itself (as PotluckDB's own
-# sqlite3.dll), never the C runtime.
+# What the library may load on Windows: parts of Windows itself, never the C
+# runtime. 0.8.0-dev.1 to dev.3 also loaded the networking and crypto DLLs
+# below, for their sync engine.
 WINDOWS_DLLS = {"kernel32.dll", "advapi32.dll", "ntdll.dll", "userenv.dll", "ws2_32.dll", "dbghelp.dll",
                 "bcrypt.dll", "bcryptprimitives.dll", "api-ms-win-core-synch-l1-2-0.dll"}
 ELF_MACHINE = {"x64": "Advanced Micro Devices X86-64", "arm64": "AArch64"}
@@ -100,7 +100,7 @@ def build_shim(target, core, out_file):
                 f"-Wl,-soname,{out_file.name}", f"-Wl,--version-script,{tmp / 'exports.map'}",
                 "-Wl,--exclude-libs,ALL", "-Wl,--no-undefined", "-Wl,-z,now", "-Wl,-z,relro",
                 "-Wl,-z,noexecstack", "-s", "-lm", "-ldl", "-lpthread",
-                # The sync engine's unwinder goes inside: no libgcc_s needed.
+                # GCC's helper library goes inside: no libgcc_s needed.
                 "-static-libgcc"]
         else:
             command = cc + ["-dynamiclib", "-arch", MACHO_ARCH[t["cpu"]], f"-mmacosx-version-min={MIN_MACOS}",

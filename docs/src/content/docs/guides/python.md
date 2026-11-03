@@ -21,17 +21,19 @@ print(db.execute("select potluckdb_version(), sqlite_version()").fetchone())
 
 Everything else is the standard library's `sqlite3`: `connect`, `Connection`,
 `Cursor`, `Row`, `Blob`, the exceptions, adapters and converters, and the
-behaviour of the Python version you run. CPython's own sqlite3 tests pass
-against it on every version and platform.
+behaviour of the Python version you run, except two details where Python 3.10
+differs from 3.11 and later: potluckdb fetches rows as they are read, and
+keeps cursors usable after a rollback, as 3.11 does. CPython's own sqlite3
+tests pass against it on every version and platform, apart from the four 3.10
+tests of those details
+([the list](https://github.com/potluckdb/potluckdb/blob/main/python/tests/cpython_known_failures.txt)).
 
 Two names are added: `potluckdb.__version__` (this package) and
 `potluckdb.core_version` (the PotluckDB library inside it).
 
 ## Good to know
 
-- Databases sync too: `potluckdb attach app.db s3://my-bucket/app` once,
-  with no code change ([Sync a database](/guides/sync-a-database/)). One
-  device writes at a time for now.
+- Databases sync in a later pre-release; for now it is SQLite with no sync.
 - Database names starting with `file:` are always read as URIs.
 - It never clashes with the standard `sqlite3` in the same program: each
   uses its own SQLite.

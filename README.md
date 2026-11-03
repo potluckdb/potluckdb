@@ -1,17 +1,17 @@
 # PotluckDB
 
-Local-first SQLite and DuckDB, synced through a storage bucket you own. No
-server. Reads and writes stay local and fast; changes reach your other devices
-in about half a second.
+Local-first SQLite and DuckDB, to be synced through a storage bucket you own,
+with no server.
 
-PotluckDB is a drop-in replacement for the standard SQLite library: your
-existing code, drivers and ORMs keep working, and sync is switched on with a
-bucket address.
+Today PotluckDB is a drop-in replacement for the standard SQLite library: your
+existing code, drivers and ORMs keep working. **It does not sync yet.**
 
-> **Status: pre-release.** The 0.8 series is being built in the open, with a
-> new pre-release every few hours. Early pre-releases do not sync yet; the
-> [changelog](CHANGELOG.md) says what each one does. Not for production use
-> before 1.0.
+> **Status: pre-release.** The 0.8 series is being built in the open. The
+> current pre-releases are the SQLite library and its language packages only;
+> sync comes in later releases. 0.8.0-dev.1 to dev.3 had a first sync engine
+> and a `potluckdb` command for folders; both were removed, to be rebuilt.
+> The [changelog](CHANGELOG.md) says what each release does. Not for
+> production use before 1.0.
 
 ## Try a pre-release
 
@@ -27,16 +27,6 @@ LD_LIBRARY_PATH=$PWD/potluckdb-sqlite-<version>-linux-x64-gnu/lib \
 ```
 
 Each release lists how to check its files (`SHA256SUMS` and Sigstore signatures).
-
-To try sync already, the `potluckdb` command (archives named
-`potluckdb-cli-<version>-<platform>`) keeps a folder the same on several
-devices through a bucket you own, with 7 days of history:
-
-```sh
-potluckdb sync ~/notes s3://my-bucket/notes
-```
-
-See [Sync a folder](docs/src/content/docs/guides/sync-a-folder.md).
 
 ## This repository
 
@@ -54,8 +44,8 @@ See [Sync a folder](docs/src/content/docs/guides/sync-a-folder.md).
 | `rust/` | The Rust packages: PotluckDB's `libsqlite3-sys` for rusqlite, sqlx and diesel, and the `potluckdb` crate on crates.io |
 
 Language add-ons, docs and examples arrive here during the 0.8 series. The
-sync engine itself is built in a private repository; its binaries are
-published here.
+library itself is built in a private repository; its binaries are published
+here.
 
 ## Licence
 

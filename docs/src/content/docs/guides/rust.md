@@ -45,7 +45,7 @@ error that says what to change.
 
 ## Good to know
 
-- Databases sync in a later pre-release (0.8.2); for now it runs queries
+- Databases sync in a later pre-release; for now it runs queries
   exactly like rusqlite's bundled SQLite, with a few differences in build
   options (foreign keys are off until `PRAGMA foreign_keys = ON`, no
   `soundex()`).

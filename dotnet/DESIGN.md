@@ -78,8 +78,9 @@ editing and re-signing the binary. The small library avoids both.
 **Windows: the core's `bin/sqlite3.dll`, renamed.** Windows binds each import
 to a named DLL and identifies loaded DLLs by file name, so a renamed DLL can't
 be confused with another `sqlite3.dll`, `e_sqlite3.dll` or `winsqlite3.dll`.
-It is the release's file byte for byte, needs only Windows itself (its sync
-engine uses Windows' networking and crypto DLLs), and no compiler.
+It is the release's file byte for byte, needs only Windows itself (the sync
+engine of 0.8.0-dev.1 to dev.3 also used Windows' networking and crypto DLLs),
+and no compiler.
 
 `scripts/native.py` builds or copies the library and checks it: what it
 exports, its SONAME or install name, what it needs (only the C library,

@@ -6,8 +6,8 @@ sidebar:
 ---
 
 Pre-releases ship PotluckDB as a drop-in SQLite library: programs that use
-SQLite load it in place of their usual one. Databases don't sync yet; folders
-do, with the [`potluckdb` command](/guides/sync-a-folder/).
+SQLite load it in place of their usual one. Nothing syncs yet; sync comes in
+later releases ([what works today](/start/status/)).
 
 From Python, the quickest start is the package:
 
