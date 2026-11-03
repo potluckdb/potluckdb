@@ -9,7 +9,7 @@ export default defineConfig({
   integrations: [
     starlight({
       title: 'PotluckDB',
-      description: 'Local-first SQLite and DuckDB, synced through a storage bucket you own.',
+      description: 'Local-first SQLite and DuckDB, to be synced through a storage bucket you own. Today: the SQLite drop-in library, without sync.',
       social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/potluckdb/potluckdb' }],
       editLink: { baseUrl: 'https://github.com/potluckdb/potluckdb/edit/main/docs/' },
       plugins: [starlightLlmsTxt()],

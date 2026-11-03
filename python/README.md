@@ -22,7 +22,9 @@ print(db.execute("select potluckdb_version(), sqlite_version()").fetchone())
 
 Everything else is the standard library's `sqlite3`: `connect`, `Connection`,
 `Cursor`, `Row`, `Blob`, the exceptions, `PARSE_DECLTYPES`, adapters and
-converters, `sqlite3.dbapi2`, and the behaviour of the Python version you run.
+converters, `sqlite3.dbapi2`, and the behaviour of the Python version you run
+(on Python 3.10, rows are fetched as they are read and cursors stay usable
+after a rollback, as in 3.11; see `tests/cpython_known_failures.txt`).
 Two extra names:
 
 | Name | What |
