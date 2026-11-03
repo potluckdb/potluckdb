@@ -263,8 +263,13 @@ class SymbolTests(unittest.TestCase):
                                  text=True, check=True).stdout
         sqlite = [line for line in dynamic.splitlines() if "sqlite3_" in line or "potluckdb_" in line]
         self.assertEqual(sqlite, [], "SQLite symbols in the extension's dynamic symbol table")
-        defined = [line.split()[-1] for line in dynamic.splitlines() if " T " in line]
-        self.assertIn("PyInit__sqlite3", defined)
+        defined = subprocess.run(["nm", "-D", "--defined-only", str(self.extension())], capture_output=True,
+                                 text=True, check=True).stdout
+        names = sorted({l.split()[-1] for l in defined.splitlines() if l.strip()})
+        # _init and _fini: the C runtime's (musl toolchains export them).
+        others = [n for n in names if n not in ("PyInit__sqlite3", "_init", "_fini")]
+        self.assertEqual(others, [], "the extension exports more than its init function")
+        self.assertIn("PyInit__sqlite3", names)
 
     @unittest.skipUnless(sys.platform == "darwin" and shutil.which("nm"), "needs nm on macOS")
     def test_no_sqlite_symbols_macos(self):
