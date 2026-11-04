@@ -8,9 +8,10 @@ every registry serves the version, and writes how long each step took.
     python tools/release_watch.py watch --version 0.8.0-dev.4 --runs '<json>'
             [--release-run ID] [--build-started-at TIME] [--summary FILE] [--out DIR]
         (release.yml) Waits for each run, re-runs its failed jobs once, then
-        waits up to 15 minutes for its registry to serve the version, and
-        writes the timings table. Fails if a registry is off, a run failed or
-        a registry does not serve every package.
+        waits for its registry to serve the version until the 1 hour goal (at
+        least 15 minutes after the run), and writes the timings table. Fails
+        if a registry is off, a run failed or a registry does not serve every
+        package.
     python tools/release_watch.py watch --version 0.8.0-dev.3 --check-only
         Read only, for a past release: finds its runs, never re-runs or
         waits, and prints the table.
@@ -35,8 +36,8 @@ from core_archive import TARGETS, pep440  # noqa: E402
 REPO = "potluckdb/potluckdb"
 USER_AGENT = "potluckdb-release-watch (https://github.com/potluckdb/potluckdb)"
 POLL = 60  # seconds between checks (GITHUB_TOKEN may make 1,000 requests an hour)
-PROPAGATION = 15 * 60  # how long a registry may take to serve a finished run's packages
-GOAL = 60 * 60  # every registry within 1 hour of the start (core#125)
+PROPAGATION = 15 * 60  # the least time a registry gets to serve a finished run's packages
+GOAL = 60 * 60  # every registry within 1 hour of the start (core#125); a registry gets until then
 DISPATCHES = 4  # tries to start each run: GitHub sometimes answers 5xx, sometimes after starting it
 LOOK_EVERY = 15  # seconds between looks for a run started without its id
 LOOK_FOR = 120  # seconds to look for it before concluding it was not started
@@ -258,8 +259,11 @@ def find_run(gh, workflow, since, name=None, look_for=0, clock=utcnow, sleep=tim
         sleep(LOOK_EVERY)
 
 
-def watch(version, runs, gh, get, check_only=False, deadline=None, since=None, clock=utcnow, sleep=time.sleep, log=print):
-    """Waits for the runs and the registries; returns the state of each registry."""
+def watch(version, runs, gh, get, check_only=False, deadline=None, since=None, goal=None, clock=utcnow,
+          sleep=time.sleep, log=print):
+    """Waits for the runs and the registries; returns the state of each registry.
+    A registry gets until goal (a time) to serve the version, and at least
+    PROPAGATION after its run: NuGet listed 0.8.0-dev.4 20 minutes after the push."""
     regs = {}
     for key, (registry, workflow, variable) in REGISTRIES.items():
         given = runs.get(key, {})
@@ -281,7 +285,9 @@ def watch(version, runs, gh, get, check_only=False, deadline=None, since=None, c
             return reg["missing"] is not None
         if not reg["final"] or reg["missing"] is None:
             return False
-        return reg["final"] != "success" or (now - reg["final_at"]).total_seconds() >= PROPAGATION
+        if reg["final"] != "success":
+            return True
+        return (now - reg["final_at"]).total_seconds() >= PROPAGATION and (goal is None or now >= goal)
 
     def follow(reg, now):
         run = gh(f"repos/{REPO}/actions/runs/{reg['run']}")
@@ -462,13 +468,14 @@ def main(argv=None):
             query = urllib.parse.urlencode({"event": "workflow_dispatch", "per_page": 100, "created": "<=" + iso(published)})
             release_run = next((r["id"] for r in gh_api(f"repos/{REPO}/actions/workflows/release.yml/runs?{query}")["workflow_runs"]
                                 if parse_time(r["updated_at"]) >= published), None)
-    deadline = utcnow() + datetime.timedelta(minutes=args.deadline_minutes)
-    regs = watch(version, runs, gh_api, http_get, args.check_only, deadline, since)
     try:
         build_started_at = parse_time(args.build_started_at)
     except ValueError:
         print(f"warning: --build-started-at {args.build_started_at!r} is not a time; the table starts at release.yml")
         build_started_at = None
+    deadline = utcnow() + datetime.timedelta(minutes=args.deadline_minutes)
+    goal = (build_started_at or utcnow()) + datetime.timedelta(seconds=GOAL)  # without core's start, from now
+    regs = watch(version, runs, gh_api, http_get, args.check_only, deadline, since, goal=goal)
     rows, origin = timings(version, regs, gh_api, release_run, build_started_at)
     table = render(version, rows, origin)
     found = problems(regs, version)

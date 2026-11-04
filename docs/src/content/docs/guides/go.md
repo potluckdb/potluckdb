@@ -34,7 +34,7 @@ To keep your code, and to switch dependencies that import go-sqlite3 too
 (for example GORM's SQLite driver), add one `replace` line to `go.mod`:
 
 ```sh
-go mod edit -replace github.com/mattn/go-sqlite3=github.com/potluckdb/potluckdb-go/sqlite3@v0.8.0-dev.2
+go mod edit -replace github.com/mattn/go-sqlite3=github.com/potluckdb/potluckdb-go/sqlite3@v{{VERSION}}
 go mod tidy
 ```
 

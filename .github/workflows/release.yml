@@ -235,10 +235,12 @@ jobs:
   watch:
     # Waits for each publishing run (re-running its failed jobs once), checks
     # that every registry serves the version, and writes the time of each
-    # step to the job summary and the artifact release-timings. The timeout
-    # allows the slowest run seen (go.yml, 25 minutes with a stalled mirror)
-    # twice, the registries' 15 minutes and some margin; the script stops
-    # 10 minutes before it to write the table.
+    # step to the job summary and the artifact release-timings. A registry
+    # gets until the 1 hour goal, which counts from core's start, so it comes
+    # at most 60 minutes into this job. After a late run it gets at least 15
+    # minutes: the slowest run seen (go.yml, 25 minutes with a stalled mirror)
+    # twice and 15 minutes make 65. The script stops at 70 minutes to write
+    # the table, 10 before the timeout.
     needs: finalize
     if: ${{ !cancelled() && needs.finalize.outputs.runs }}
     runs-on: ubuntu-24.04

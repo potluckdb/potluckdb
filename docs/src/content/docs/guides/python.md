@@ -16,7 +16,7 @@ import potluckdb as sqlite3          # the only change in an existing app
 
 db = sqlite3.connect("app.db")
 print(db.execute("select potluckdb_version(), sqlite_version()").fetchone())
-# ('0.8.0-dev.1', '3.54.1')
+# ('{{VERSION}}', '3.54.1')
 ```
 
 Everything else is the standard library's `sqlite3`: `connect`, `Connection`,

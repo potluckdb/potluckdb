@@ -27,7 +27,7 @@ functions exist only on Windows.
 
 | Name | Where | Returns |
 | --- | --- | --- |
-| `potluckdb_version()` | SQL function | The PotluckDB version, for example `0.8.0-dev.1` |
+| `potluckdb_version()` | SQL function | The PotluckDB version, for example `{{VERSION}}` |
 | `potluckdb_version(void)` | C function, in `potluckdb.h` | The same, as a C string |
 
 Everything else behaves as in SQLite itself.

@@ -35,5 +35,13 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: docs/package-lock.json
+      - name: No page names a fixed PotluckDB version
+        # docs.yml fills in {{VERSION}} with each release's own version.
+        # start/status.md lists the planned versions on purpose.
+        run: |
+          if grep -rnE '(^|[^0-9.])0\.[0-9]+\.[0-9]+' src/content --exclude=status.md; then
+            echo "::error::A docs page names a fixed PotluckDB version, which goes out of date. Write {{VERSION}}: docs.yml fills in the release's version."
+            exit 1
+          fi
       - run: npm ci --no-audit --no-fund
       - run: npm run build
