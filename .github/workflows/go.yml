@@ -13,6 +13,8 @@
 #
 # The checks run against a release's core archives, so nothing runs before
 # the first release exists; the run then passes with a notice.
+# Called with archives: run (release.yml, before it publishes), the archives
+# are those of the calling run's artifact dist: the draft release's.
 name: go
 
 on:
@@ -42,12 +44,16 @@ on:
         description: "Push the Go modules for this version to potluckdb-go"
         type: boolean
         default: false
+      archives:
+        description: "release: the core archives of the GitHub release; run: those in the calling run's artifact dist"
+        type: string
+        default: release
 
 permissions:
   contents: read
 
 concurrency:
-  group: go-${{ github.ref }}-${{ inputs.version }}-${{ inputs.publish }}
+  group: go-${{ github.ref }}-${{ inputs.version }}-${{ inputs.publish }}-${{ inputs.archives }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -87,12 +93,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
           PUBLISH: ${{ inputs.publish }}
+          ARCHIVES: ${{ inputs.archives }}
         run: |
           if [ -z "$VERSION" ]; then
             VERSION=$(gh release list -R "$GITHUB_REPOSITORY" --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName // ""')
             VERSION=${VERSION#v}
           fi
-          if [ -n "$VERSION" ] && gh release view "v$VERSION" -R "$GITHUB_REPOSITORY" --json tagName > /dev/null 2>&1; then
+          if [ "$ARCHIVES" = run ]; then
+            # From release.yml, before the release is out: its checked draft's archives.
+            [ "$PUBLISH" != true ] || { echo "::error::Publishing builds from the published release, not with archives: run."; exit 1; }
+            echo "Testing the draft of PotluckDB $VERSION (the calling run's archives)"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          elif [ -n "$VERSION" ] && gh release view "v$VERSION" -R "$GITHUB_REPOSITORY" --json tagName > /dev/null 2>&1; then
             echo "Testing against PotluckDB $VERSION"
             echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           elif [ "$PUBLISH" = true ]; then
@@ -161,18 +173,31 @@ jobs:
           cache: false
       - name: Download the PotluckDB libraries
         # All of them: the driver's go.mod needs every platform's module.
+        if: inputs.archives != 'run'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release download "v$VERSION" -R "$GITHUB_REPOSITORY" -D ../core -p "potluckdb-sqlite-$VERSION-*" -p SHA256SUMS
           ls -l ../core
+      - name: Take the PotluckDB libraries from the calling run
+        if: inputs.archives == 'run'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: core
       - name: Does the release have a library MinGW can link?
         id: mingw
         if: matrix.mingw
+        env:
+          ARCHIVES: ${{ inputs.archives }}
         run: |
           if python -c "import sys, zipfile; sys.exit(not any(n.endswith('/lib/static/libsqlite3.a') for n in zipfile.ZipFile(sys.argv[1]).namelist()))" \
               "../core/potluckdb-sqlite-$VERSION-${{ matrix.target }}.zip"; then
             echo "available=true" >> "$GITHUB_OUTPUT"
+          elif [ "$ARCHIVES" = run ]; then
+            # From release.yml: a release must have every platform's module.
+            echo "::error title=No Go module for ${{ matrix.target }}::The draft of PotluckDB $VERSION has no static library MinGW can link for ${{ matrix.target }} (lib/static/libsqlite3.a), so the Go package would have no module for it."
+            exit 1
           else
             echo "::notice title=No Go module for ${{ matrix.target }}::PotluckDB $VERSION has only an MSVC static library for ${{ matrix.target }}, which MinGW cannot link (see go/DESIGN.md), so the Go package has no module for it. Its checks are skipped."
           fi
@@ -233,12 +258,21 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false
+      - name: Take the PotluckDB libraries from the calling run
+        if: inputs.archives == 'run'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: core
       - name: Write the distribution repository
         env:
           GH_TOKEN: ${{ github.token }}
+          ARCHIVES: ${{ inputs.archives }}
+          # From release.yml, every platform must get a module.
+          REQUIRE_ALL: ${{ inputs.archives == 'run' && '-require-all' || '' }}
         run: |
-          gh release download "v$VERSION" -R "$GITHUB_REPOSITORY" -D ../core -p "potluckdb-sqlite-$VERSION-*" -p SHA256SUMS
-          POTLUCKDB_CORE_DIR=../core go run ./tools dist -version "$VERSION" -out "$RUNNER_TEMP/potluckdb-go"
+          [ "$ARCHIVES" = run ] || gh release download "v$VERSION" -R "$GITHUB_REPOSITORY" -D ../core -p "potluckdb-sqlite-$VERSION-*" -p SHA256SUMS
+          POTLUCKDB_CORE_DIR=../core go run ./tools dist -version "$VERSION" -out "$RUNNER_TEMP/potluckdb-go" $REQUIRE_ALL
           {
             echo "### potluckdb-go for PotluckDB $VERSION"
             echo

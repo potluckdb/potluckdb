@@ -8,6 +8,8 @@
 #
 # The addon is built against a release's core archives, so nothing is built
 # before the first release exists; the run then passes with a notice.
+# Called with archives: run (release.yml, before it publishes), the archives
+# are those of the calling run's artifact dist: the draft release's.
 name: node
 
 on:
@@ -37,12 +39,16 @@ on:
         description: "Publish the npm packages for this version"
         type: boolean
         default: false
+      archives:
+        description: "release: the core archives of the GitHub release; run: those in the calling run's artifact dist"
+        type: string
+        default: release
 
 permissions:
   contents: read
 
 concurrency:
-  group: node-${{ github.ref }}-${{ inputs.version }}-${{ inputs.publish }}
+  group: node-${{ github.ref }}-${{ inputs.version }}-${{ inputs.publish }}-${{ inputs.archives }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -59,12 +65,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
           PUBLISH: ${{ inputs.publish }}
+          ARCHIVES: ${{ inputs.archives }}
         run: |
           if [ -z "$VERSION" ]; then
             VERSION=$(gh release list -R "$GITHUB_REPOSITORY" --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName // ""')
             VERSION=${VERSION#v}
           fi
-          if [ -n "$VERSION" ] && gh release view "v$VERSION" -R "$GITHUB_REPOSITORY" --json tagName > /dev/null 2>&1; then
+          if [ "$ARCHIVES" = run ]; then
+            # From release.yml, before the release is out: its checked draft's archives.
+            [ "$PUBLISH" != true ] || { echo "::error::Publishing builds from the published release, not with archives: run."; exit 1; }
+            echo "Testing the draft of PotluckDB $VERSION (the calling run's archives)"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          elif [ -n "$VERSION" ] && gh release view "v$VERSION" -R "$GITHUB_REPOSITORY" --json tagName > /dev/null 2>&1; then
             echo "Building against PotluckDB $VERSION"
             echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           elif [ "$PUBLISH" = true ]; then
@@ -139,12 +151,19 @@ jobs:
         with:
           node-version: 24
       - name: Download the PotluckDB library for ${{ matrix.target }}
+        if: inputs.archives != 'run'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release download "v$VERSION" -R "$GITHUB_REPOSITORY" -D ../core \
             -p "potluckdb-sqlite-$VERSION-${{ matrix.target }}.*" -p SHA256SUMS
           ls -l ../core
+      - name: Take the PotluckDB libraries from the calling run
+        if: inputs.archives == 'run'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: core
       - name: Build, check, test, package (glibc 2.28, in manylinux)
         if: matrix.container == 'manylinux'
         run: |

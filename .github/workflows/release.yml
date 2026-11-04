@@ -1,7 +1,9 @@
 # Publishes a release that core's release-build workflow prepared as a draft
 # (PRD E5): checks the exact files and their signatures, tests them on every
-# platform, then writes the release notes and publishes the GitHub release.
-# Nothing is rebuilt. Started by core's release-build workflow.
+# platform, builds and tests every package from them, then writes the release
+# notes, publishes the GitHub release and starts each package's publishing.
+# Nothing is published unless every check passed. Nothing is rebuilt.
+# Started by core's release-build workflow.
 name: release
 
 on:
@@ -10,6 +12,10 @@ on:
       version:
         description: "Version of the draft release, e.g. 0.8.0-dev.1"
         required: true
+      dry_run:
+        description: "Run every check, publish nothing (stop before finalize)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -91,14 +97,62 @@ jobs:
                 [ "$i" = 3 ] && exit 1; echo "dnf stalled or failed; trying again"; done; fi
             python3 tests/release/smoke.py dist/potluckdb-sqlite-"$VERSION"-${{ matrix.target }}.tar.gz "$VERSION"'
 
+  # Every package's build and tests on all 8 platforms (publish: false), from
+  # the draft's files that verify checked (archives: run), before anything is
+  # published. Packages whose publishing is off are checked too. finalize
+  # starts the publishing runs on their own, as each registry trusts only its
+  # own workflow file.
+  # The permissions are those each workflow's publish job asks for, which
+  # GitHub requires even though that job is skipped here; every job that runs
+  # has the workflow's own permissions (contents: read).
+  check-python:
+    needs: verify
+    uses: ./.github/workflows/python.yml
+    permissions: { contents: read, id-token: write }
+    with: { version: "${{ inputs.version }}", publish: false, archives: run }
+  check-rust:
+    needs: verify
+    uses: ./.github/workflows/rust.yml
+    permissions: { contents: write, id-token: write }
+    with: { version: "${{ inputs.version }}", publish: false, archives: run }
+  check-dotnet:
+    needs: verify
+    uses: ./.github/workflows/dotnet.yml
+    permissions: { contents: read, id-token: write }
+    with: { version: "${{ inputs.version }}", publish: false, archives: run }
+  check-node:
+    needs: verify
+    uses: ./.github/workflows/node.yml
+    permissions: { contents: read, id-token: write }
+    with: { version: "${{ inputs.version }}", publish: false, archives: run }
+  check-go:
+    needs: verify
+    uses: ./.github/workflows/go.yml
+    with: { version: "${{ inputs.version }}", publish: false, archives: run }
+
   finalize:
-    needs: test
+    needs: [test, check-python, check-rust, check-dotnet, check-node, check-go]
+    if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write # release notes, the tag and the release
       actions: write # start the package publishing workflows
     steps:
+      - name: Is publishing on for every registry?
+        # A release goes out to all of them or to none.
+        env:
+          PYPI_PUBLISHING: ${{ vars.PYPI_PUBLISHING }}
+          CRATES_IO_PUBLISHING: ${{ vars.CRATES_IO_PUBLISHING }}
+          NUGET_PUBLISHING: ${{ vars.NUGET_PUBLISHING }}
+          NPM_PUBLISHING: ${{ vars.NPM_PUBLISHING }}
+          GO_PUBLISHING: ${{ vars.GO_PUBLISHING }}
+        run: |
+          off=0
+          for v in PYPI_PUBLISHING CRATES_IO_PUBLISHING NUGET_PUBLISHING NPM_PUBLISHING GO_PUBLISHING; do
+            [ "${!v}" = true ] || { echo "::error::The repository variable $v is not 'true'. Nothing was published."; off=1; }
+          done
+          exit $off
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Release notes, tag and publish
         id: publish
@@ -107,13 +161,25 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Publish only what the checks tested: apart from release notes,
+          # main must still be this run's commit.
+          tested() {
+            git diff --quiet "$GITHUB_SHA" "$1" -- . ':!CHANGELOG.md' ':!changes' && return
+            echo "::error::main has changed since this run's checks started, so they did not test it. Nothing was published: start release.yml again for $VERSION."
+            exit 1
+          }
+          git fetch -q origin main
+          tested origin/main
           python3 tools/release_notes.py --version "$VERSION" --notes-out ../notes.md
           git add -A CHANGELOG.md changes
           git commit -m "Release notes for $VERSION"
-          # main may have moved while the tests ran: put the notes on top.
+          # main may have moved meanwhile: put the notes on top, if its code
+          # is still what was tested. Check HEAD, not the commit below it: the
+          # rebase drops our notes commit if main already has the same change.
           for attempt in 1 2 3; do
             git push origin HEAD:main && break
             git pull --rebase origin main
+            tested HEAD
           done
           kind=$([[ "$VERSION" == *-* ]] && echo --prerelease || echo --latest)
           gh release edit "v$VERSION" --draft=false $kind --tag "v$VERSION" \
