@@ -6,9 +6,11 @@
 # docs.
 #
 # The build runs the tag's code without the Cloudflare token; the deploy job
-# runs only this file and wrangler, on the built files. The site gets a
-# release.txt (version, commit, run), which the last step looks for at
-# docs.potluckdb.com.
+# runs only this file and wrangler, on the built files. wrangler and every
+# package it loads come from .github/docs-deploy/package-lock.json of this
+# workflow's own commit, with their hashes, installed before the token is
+# given. The site gets a release.txt (version, commit, run), which the last
+# step looks for at docs.potluckdb.com.
 name: docs
 
 on:
@@ -88,6 +90,21 @@ jobs:
       VERSION: ${{ needs.build.outputs.version }}
       COMMIT: ${{ needs.build.outputs.commit }}
     steps:
+      # wrangler from this workflow's commit, not the tag's; into tool/, so
+      # that the working directory holds no wrangler config or functions/.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: tool
+          sparse-checkout: .github/docs-deploy
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Install wrangler
+        # A static deploy needs no package's install script.
+        working-directory: tool/.github/docs-deploy
+        run: npm ci --ignore-scripts --no-audit --no-fund
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: docs-site
@@ -108,10 +125,6 @@ jobs:
             echo "run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID attempt $GITHUB_RUN_ATTEMPT"
           } > site/release.txt
           cat site/release.txt
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 24
-          package-manager-cache: false
       - name: Deploy to Cloudflare Pages
         # main is the project's production branch: a deployment to it is
         # what docs.potluckdb.com serves.
@@ -120,15 +133,19 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           WRANGLER_SEND_METRICS: "false"
         run: |
-          npx --yes wrangler@4.151.3 pages deploy site --project-name potluckdb-docs --branch main \
+          tool/.github/docs-deploy/node_modules/.bin/wrangler pages deploy site \
+            --project-name potluckdb-docs --branch main \
             --commit-hash "$COMMIT" --commit-message "PotluckDB $VERSION"
       - name: docs.potluckdb.com serves it
         run: |
-          for attempt in $(seq 1 12); do
-            if curl -sSf "https://docs.potluckdb.com/release.txt?run=$GITHUB_RUN_ID.$GITHUB_RUN_ATTEMPT" | cmp -s - site/release.txt; then
+          deadline=$((SECONDS + 120))
+          while :; do
+            if curl -sSf --connect-timeout 5 --max-time 10 \
+                "https://docs.potluckdb.com/release.txt?run=$GITHUB_RUN_ID.$GITHUB_RUN_ATTEMPT" | cmp -s - site/release.txt; then
               echo "https://docs.potluckdb.com serves the docs of PotluckDB $VERSION" | tee -a "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
+            [ "$SECONDS" -lt "$deadline" ] || break
             sleep 10
           done
           echo "::error::Deployed, but docs.potluckdb.com/release.txt is not this deployment's after 2 minutes."
