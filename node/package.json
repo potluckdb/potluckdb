@@ -8,8 +8,7 @@
     "sqlite3",
     "better-sqlite3",
     "database",
-    "local-first",
-    "sync"
+    "local-first"
   ],
   "homepage": "https://github.com/potluckdb/potluckdb/tree/main/node#readme",
   "bugs": "https://github.com/potluckdb/potluckdb/issues",
