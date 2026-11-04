@@ -16,3 +16,9 @@ description: The platforms PotluckDB is built for, and the archive for each.
 
 Archive names are `potluckdb-sqlite-<version>-<platform>`. iOS, Android and
 the browser follow during the 0.8 series.
+
+The Windows archives hold two static libraries: `lib/static/sqlite3.lib` for
+Microsoft's compiler, and `lib/static/libsqlite3.a` for MinGW-w64 compilers
+(which Go uses). `libsqlite3.a` is tested with MinGW-w64 compilers for
+Microsoft's UCRT runtime (llvm-mingw, GCC) and for the older MSVCRT runtime
+(GCC, x64): the results are the same with either.
