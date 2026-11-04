@@ -147,13 +147,24 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Publish only what the checks tested: apart from release notes,
+          # main must still be this run's commit.
+          tested() {
+            git diff --quiet "$GITHUB_SHA" "$1" -- . ':!CHANGELOG.md' ':!changes' && return
+            echo "::error::main has changed since this run's checks started, so they did not test it. Nothing was published: start release.yml again for $VERSION."
+            exit 1
+          }
+          git fetch -q origin main
+          tested origin/main
           python3 tools/release_notes.py --version "$VERSION" --notes-out ../notes.md
           git add -A CHANGELOG.md changes
           git commit -m "Release notes for $VERSION"
-          # main may have moved while the tests ran: put the notes on top.
+          # main may have moved meanwhile: put the notes on top, if its code
+          # is still what was tested.
           for attempt in 1 2 3; do
             git push origin HEAD:main && break
             git pull --rebase origin main
+            tested HEAD~1
           done
           kind=$([[ "$VERSION" == *-* ]] && echo --prerelease || echo --latest)
           gh release edit "v$VERSION" --draft=false $kind --tag "v$VERSION" \
