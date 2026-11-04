@@ -254,8 +254,8 @@ def find_run(gh, workflow, since, name=None, look_for=0, clock=utcnow, sleep=tim
                     if parse_time(r["created_at"]) >= since and name in (None, r.get("display_title"))]
             if runs:
                 return min(runs, key=lambda r: (r["created_at"], r["id"]))["id"]
-        except ApiError as error:
-            log(f"could not list the {workflow} runs: {error}")
+        except (ApiError, KeyError, TypeError) as error:
+            log(f"could not list the {workflow} runs: {error!r}")
         if clock() >= until:
             return None
         sleep(LOOK_EVERY)
@@ -310,15 +310,16 @@ def watch(version, runs, gh, get, check_only=False, deadline=None, since=None, g
     while True:
         now = clock()
         for key, reg in regs.items():
-            if settled(reg, now):
+            # Past the deadline, a slow GitHub or registry must not hold up the table.
+            if settled(reg, now) or (deadline and clock() > deadline):
                 continue
             if not reg["final"]:
                 try:
                     follow(reg, now)
                     reg["unknown"] = None
-                except ApiError as error:  # unknown this round: ask again next round
+                except (ApiError, KeyError, TypeError) as error:  # unknown this round: ask again next round
                     reg["unknown"] = str(error)[-300:]
-                    log(f"{iso(now)} {reg['workflow']} run {reg['run']}: no answer from GitHub this round: {error}")
+                    log(f"{iso(now)} {reg['workflow']} run {reg['run']}: no answer from GitHub this round: {error!r}")
                     continue
             # Ask a registry only once its run is over (or in a check of a past
             # release): proxy.golang.org caches a "not found" for 30 minutes.
@@ -494,7 +495,10 @@ def main(argv=None):
     origin = build_started_at or release_at or utcnow()
     regs = watch(version, runs, gh_api, http_get, args.check_only, deadline, since,
                  goal=origin + datetime.timedelta(seconds=GOAL))
-    rows = timings(version, regs, gh_api, release_run, build_started_at, release_at, origin)
+    # Past the deadline GitHub may be what held watch up: one short try per call.
+    late = utcnow() >= deadline
+    rows = timings(version, regs, (lambda path: gh_api(path, tries=1, timeout=15)) if late else gh_api,
+                   release_run, build_started_at, release_at, origin)
     table = render(version, rows, origin)
     found = problems(regs, version)
     table += "".join(f"\n- {line}" for line in found) + ("\n" if found else "")

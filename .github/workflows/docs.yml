@@ -81,8 +81,10 @@ jobs:
         working-directory: docs
       - name: Every version is filled in
         run: |
-          if grep -rlF '{{VERSION' docs/dist; then
-            echo "::error::These built files still hold {{VERSION}}."
+          status=0
+          grep -rlF '{{VERSION' docs/dist || status=$?
+          if [ "$status" != 1 ]; then  # 0: found; 2: could not read every file
+            echo "::error::These built files still hold {{VERSION}}, or grep could not read docs/dist."
             exit 1
           fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

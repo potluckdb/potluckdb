@@ -240,11 +240,13 @@ jobs:
     # at most 60 minutes into this job. After a late run it gets at least 30
     # minutes (NuGet took 20): the slowest run seen (go.yml, 25 minutes with a
     # stalled mirror) twice and 30 minutes make 80. The script stops at 85
-    # minutes to write the table, 10 before the timeout.
+    # minutes to write the table. If GitHub or a registry is slow then, it
+    # still waits for one answer and tries each table call once, about 15
+    # minutes at worst: hence the limit of 105.
     needs: finalize
     if: ${{ !cancelled() && needs.finalize.outputs.runs }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 95
+    timeout-minutes: 105
     permissions:
       contents: read
       actions: write # re-run a publishing run's failed jobs
