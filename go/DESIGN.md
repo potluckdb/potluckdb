@@ -91,7 +91,7 @@ all of it on each platform).
 | `CGO_ENABLED=0` | builds; the program fails at `sql.Open` saying it needs cgo (go-sqlite3's behaviour) |
 | Wrong libc (`-tags musl` on glibc, or none on Alpine) | the build stops with a message naming the fix |
 | Library module of another version in `go.mod` | the build stops at the version marker |
-| Platform without a library (for example Windows today) | the build stops: "PotluckDB has no SQLite library for this platform. It has one for ..." |
+| Platform without a library (for example Windows before 0.8.0-dev.4) | the build stops: "PotluckDB has no SQLite library for this platform. It has one for ..." |
 | The tree published with `scripts/publish.sh` into a git repository, then fetched by Go itself from git (`GOPROXY=direct`, as proxy.golang.org fetches) | the tags resolve, the quickstart runs, and `go.sum` is identical to the one from the proxy on disk |
 
 Sizes: a library module is 0.96 to 1.06 MB zipped, 2.1 to 2.3 MB unpacked
@@ -134,11 +134,11 @@ without it the glibc library is used, with it the musl library. The driver
 checks the C compiler's libc (`__GLIBC__`) and stops a mismatched build with
 a message, instead of a long list of missing symbols at link time.
 
-## Windows: the MSVC library does not link with MinGW
+## Windows: a MinGW library next to the MSVC one
 
 cgo on Windows uses MinGW-w64 (gcc, or clang from llvm-mingw); it cannot
-use MSVC. The archives' static library, `lib/static/sqlite3.lib` (MSVC,
-`/MT /Zl`), does not link with MinGW. It needs parts of the MSVC C runtime
+use MSVC. The archives' MSVC static library, `lib/static/sqlite3.lib`
+(`/MT /Zl`), does not link with MinGW. It needs parts of the MSVC C runtime
 that MinGW does not have:
 
 - x64: `__security_cookie`, `__security_check_cookie`, `__GSHandlerCheck`
@@ -153,35 +153,44 @@ A small file defining the x64 helpers makes the library link and run (tried:
 arm64 helpers have conventions that are not documented, and every build
 would print a linker warning. It is not used.
 
-**Proposed change to the core build:** add a MinGW-built static library to
-both Windows archives, as `lib/static/libsqlite3.a` (listed in
-`BUILD-INFO.json`), next to the MSVC one. The core's `CMakeLists.txt` needs
-no change: its non-MSVC branch already builds `sqlite3_static` with the same
-options and hidden symbols. For example, with llvm-mingw (one toolchain for
-both CPUs):
+Since 0.8.0-dev.4, both Windows archives also hold a MinGW static library,
+`lib/static/libsqlite3.a` (listed in `BUILD-INFO.json`; potluckdb/core#126).
+The core builds it from the same sources and options with llvm-mingw
+20260922, runs its smoke test and math vectors against it, and checks that
+it names no C runtime and that a DLL linking it exports none of its names.
+The generator uses this file when a Windows archive has it. For an older
+release it writes no Windows modules: the driver does not require them, and
+a Windows build stops with the message above. The CI matrix skips Windows
+with a notice for a release without the library.
 
-```sh
-cmake -S . -B build-mingw-x64 -G Ninja -DCMAKE_SYSTEM_NAME=Windows \
-  -DCMAKE_C_COMPILER=x86_64-w64-mingw32-clang -DCMAKE_BUILD_TYPE=Release -DPOTLUCKDB_VERSION=<version>
-cmake --build build-mingw-x64 --target sqlite3_static     # static/libsqlite3.a
-# arm64: the same with aarch64-w64-mingw32-clang
-```
+### Which C compilers work
 
-Tested with what works: built that way from core commit `bcb76b4` (the
-0.8.0-dev.0 source) with llvm-mingw 20260922, added to copies of the two
-Windows archives, the generated Windows modules
+The library is built for UCRT (the C runtime of Windows 10 and later) but
+needs nothing that only UCRT has, so compilers for the older MSVCRT runtime
+link it too. Tested with the 0.8.0-dev.4 archives from core's release-build
+runs, before the release:
 
-- link with MinGW-w64 gcc 13 (msvcrt) and with llvm-mingw clang (UCRT);
-- run on Windows 11 x64, with Go and llvm-mingw installed as the CI job
-  installs them: every check of `tools test` passes (the quickstart prints
-  `0.8.0-dev.0 3.54.1` built normally, with `-trimpath`, from `vendor/` and
-  through `replace`; go-sqlite3's tests pass);
-- link for windows/arm64 (not run: no arm64 Windows machine here).
+| Compiler | C runtime | Where | `tools test` | SQL `sqrt()` exact |
+| --- | --- | --- | --- | --- |
+| llvm-mingw 20260922 (clang 23.1) | UCRT | Windows 11 x64; GitHub's windows-2025 and windows-11-arm | all pass | yes |
+| GCC 16.2 (WinLibs) | UCRT | Windows 11 x64 | all pass | yes |
+| GCC 15.2 (in `C:\mingw64` on GitHub's windows-2025) | UCRT | windows-2025 | all pass | yes |
+| GCC 16.2 (WinLibs) | MSVCRT | Windows 11 x64 | all pass | yes (since potluckdb/core#182's fix) |
 
-The generator uses `lib/static/libsqlite3.a` from a Windows archive when it
-is there. Until then it writes no Windows modules: the driver does not
-require them, and a Windows build stops with the message above. The CI
-matrix skips Windows with a notice until a release has the library.
+SQLite registers SQL `sqrt()` with the address of the C function `sqrt`, so
+a library that takes `sqrt` from the platform uses the program's C runtime.
+With MSVCRT, mingw-w64 links its own `sqrt` in place of msvcrt.dll's, and it
+rounds twice: with the first archives, 2 of the core's 5,793 math vectors
+failed (`sqrt(1.7976931348623157e308)`, and `sqrt(0.9999999999999999)`,
+which gave `1`). So the core's MinGW library now computes `sqrt` with the
+CPU's instruction (x64 `sqrtsd`, arm64 `fsqrt`, both correctly rounded), and
+its build fails if the library takes `sqrt` from the platform
+(potluckdb/core#182). With those archives, `tools test` and SQL `sqrt()`
+were tested again on Windows 11 x64 with all three local compilers (the
+rows above that say Windows 11 x64). The README and the guide still name
+UCRT compilers first, since llvm-mingw is the one tested on both CPUs; the
+driver does not refuse others. A compiler's runtime shows in its headers:
+with UCRT, `#include <stdio.h>` defines `_UCRT`.
 
 ## Checks of the program
 
@@ -223,7 +232,8 @@ per connection. Results (including PotluckDB's two tests in
 | linux-arm64-musl | Alpine 3.22 arm64 gcc, under QEMU | 99/99 + 1 not run | 110/110 + 1 | 99/99 + 1 |
 | macos-arm64 | macOS 26.6, Apple silicon | 100/100 | 111/111 | 100/100 |
 | macos-x64 | the same Mac, under Rosetta | 100/100 | 111/111 | 100/100 |
-| windows-x64 | Windows 11, llvm-mingw clang (with the proposed MinGW library) | 100/100 | 111/111 | 100/100 |
+| windows-x64 | Windows 11 (llvm-mingw clang 23.1; GCC 16.2 for UCRT and for MSVCRT); GitHub's windows-2025 (llvm-mingw; GCC 15.2) | 100/100 | 111/111 | 100/100 |
+| windows-arm64 | GitHub's windows-11-arm, llvm-mingw clang 23.1 | 100/100 | 111/111 | 100/100 |
 
 The one test not run on musl, `TestRowsContextPanicClearsActiveRows`
 (`test/known-failures.txt`), panics inside an SQL function. The panic
@@ -273,13 +283,19 @@ Alpine, on x64 and arm64; macOS on Apple silicon and Intel), with the same
 test results as above, and skips both Windows platforms with a notice:
 0.8.0-dev.1's Windows archives, too, have only the MSVC library.
 
+go.yml's Windows steps (install llvm-mingw, then `tools test`) ran with the
+same commands in a throwaway workflow, against the 0.8.0-dev.4 archives of
+core's release-build run, on windows-2025 and windows-11-arm: every check
+passes. A Windows test job takes about 4 minutes on x64 and 6.5 on arm64
+(go-sqlite3's tests take 3 of them there); the Linux jobs take about 1.5,
+macOS Intel 3 to 4.
+
 ## Not verified yet
 
-- The `publish` job, and the Windows CI steps after the skip (installing
-  llvm-mingw on the runners): they have not run in CI. The same Windows
-  setup was run by hand on Windows 11 x64.
-- Windows with the archives as they are: no Go module until the core build
-  adds a MinGW library. windows/arm64 has been linked but not run.
+- The `publish` job: it has not run in CI.
+- go.yml's Windows steps in go.yml itself: they first run against a release
+  that has the MinGW library (0.8.0-dev.4). The same steps passed in a
+  throwaway workflow (above).
 - `go get` through the real proxy.golang.org and sum.golang.org, and pushing
   to GitHub as the App: tested with a proxy on disk and a local git
   repository, which give the same module checksums.
