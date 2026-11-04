@@ -37,8 +37,10 @@ Two names are added: `potluckdb.__version__` (this package) and
 - Database names starting with `file:` are always read as URIs.
 - It never clashes with the standard `sqlite3` in the same program: each
   uses its own SQLite.
-- `PRAGMA secure_delete` is off, as in sqlite.org's SQLite and in Python's own
-  `sqlite3` on macOS and Windows. On Ubuntu, the system Python's `sqlite3` has
-  it on, so deleted content is overwritten there; with PotluckDB it stays
-  readable in the database file until its space is reused. Run
-  `PRAGMA secure_delete = ON` on each connection to get that back.
+- `PRAGMA secure_delete` is off, as in sqlite.org's SQLite, python.org's Python
+  and Homebrew's Python. Some Python builds turn it on: Ubuntu's system Python
+  (on) and Apple's `/usr/bin/python3` on macOS ("fast" mode, which overwrites
+  deleted content when that costs no extra disk writes). With PotluckDB,
+  deleted content stays readable in the database file until its space is
+  reused. Run `PRAGMA secure_delete = ON` (or `FAST`) on each connection to get
+  that back.
