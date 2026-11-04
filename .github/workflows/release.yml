@@ -138,9 +138,9 @@ jobs:
     needs: [test, check-python, check-rust, check-dotnet, check-node, check-go]
     if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-24.04
-    # If GitHub hangs, publishing takes at most 12 minutes, starting the
-    # registries 4 and the docs 1.
-    timeout-minutes: 20
+    # If GitHub hangs: checkout takes at most 3 minutes, publishing 13,
+    # starting the registries 4 and the docs 1.
+    timeout-minutes: 25
     permissions:
       contents: write # release notes, the tag and the release
       actions: write # start the package publishing workflows
@@ -162,8 +162,10 @@ jobs:
           done
           exit $off
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        timeout-minutes: 3
       - name: Release notes, tag and publish
         id: publish
+        timeout-minutes: 13
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -178,7 +180,9 @@ jobs:
           }
           timeout 60 git fetch -q origin main
           tested origin/main
-          python3 tools/release_notes.py --version "$VERSION" --notes-out ../notes.md
+          # A re-run keeps the date of notes already on main, so they match.
+          date=$(git show origin/main:CHANGELOG.md | sed -n "s/^## $VERSION (\(.*\))\$/\1/p" | head -1 || true)
+          python3 tools/release_notes.py --version "$VERSION" ${date:+--date "$date"} --notes-out ../notes.md
           git add -A CHANGELOG.md changes
           git commit -m "Release notes for $VERSION"
           # main may have moved meanwhile: put the notes on top, if its code
@@ -204,7 +208,7 @@ jobs:
               published=1; break
             fi
           done
-          [ -n "$published" ] || { echo "::error::Could not publish the release v$VERSION: it is still a draft."; exit 1; }
+          [ -n "$published" ] || { echo "::error::GitHub did not confirm that the release v$VERSION is public, so no registry was started. Once GitHub answers again, re-run this run's failed jobs: that finishes publishing and starts the registries."; exit 1; }
           echo "published https://github.com/$GITHUB_REPOSITORY/releases/tag/v$VERSION"
       - name: Start the package publishing workflows
         # Each registry trusts its own workflow file, so each one runs on its
