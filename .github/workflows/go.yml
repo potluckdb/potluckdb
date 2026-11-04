@@ -188,10 +188,16 @@ jobs:
       - name: Does the release have a library MinGW can link?
         id: mingw
         if: matrix.mingw
+        env:
+          ARCHIVES: ${{ inputs.archives }}
         run: |
           if python -c "import sys, zipfile; sys.exit(not any(n.endswith('/lib/static/libsqlite3.a') for n in zipfile.ZipFile(sys.argv[1]).namelist()))" \
               "../core/potluckdb-sqlite-$VERSION-${{ matrix.target }}.zip"; then
             echo "available=true" >> "$GITHUB_OUTPUT"
+          elif [ "$ARCHIVES" = run ]; then
+            # From release.yml: a release must have every platform's module.
+            echo "::error title=No Go module for ${{ matrix.target }}::The draft of PotluckDB $VERSION has no static library MinGW can link for ${{ matrix.target }} (lib/static/libsqlite3.a), so the Go package would have no module for it."
+            exit 1
           else
             echo "::notice title=No Go module for ${{ matrix.target }}::PotluckDB $VERSION has only an MSVC static library for ${{ matrix.target }}, which MinGW cannot link (see go/DESIGN.md), so the Go package has no module for it. Its checks are skipped."
           fi
@@ -262,9 +268,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           ARCHIVES: ${{ inputs.archives }}
+          # From release.yml, every platform must get a module.
+          REQUIRE_ALL: ${{ inputs.archives == 'run' && '-require-all' || '' }}
         run: |
           [ "$ARCHIVES" = run ] || gh release download "v$VERSION" -R "$GITHUB_REPOSITORY" -D ../core -p "potluckdb-sqlite-$VERSION-*" -p SHA256SUMS
-          POTLUCKDB_CORE_DIR=../core go run ./tools dist -version "$VERSION" -out "$RUNNER_TEMP/potluckdb-go"
+          POTLUCKDB_CORE_DIR=../core go run ./tools dist -version "$VERSION" -out "$RUNNER_TEMP/potluckdb-go" $REQUIRE_ALL
           {
             echo "### potluckdb-go for PotluckDB $VERSION"
             echo
