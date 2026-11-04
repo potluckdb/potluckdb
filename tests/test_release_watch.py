@@ -2,7 +2,9 @@ import contextlib
 import datetime
 import io
 import json
+import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -309,6 +311,40 @@ class TableTest(unittest.TestCase):
         self.assertIn(f"| python.yml run 1 |  |  |  |  | {unknown} |", table)
         self.assertIn("| rust.yml run 2 | 00:59:44 | 01:04:00 | 4m 16s | 14m 05s | success |", table)
         self.assertIn("| **PyPI**: python 0.8.0-dev.3 |  | 00:59:40 |  | 9m 45s | served |", table)
+
+
+@unittest.skipUnless(shutil.which("git") and shutil.which("bash") and (os.name != "nt" or os.environ.get("MSYSTEM")),
+                     "needs git and bash (on Windows, Git Bash)")
+class GoPublishTest(unittest.TestCase):
+    def test_a_push_that_fails_leaves_no_tags_so_a_rerun_can_publish(self):
+        # go/scripts/publish.sh pushes main and every module's tag at once. One
+        # rejected tag must reject them all: a re-run refuses to add to tags
+        # that already exist.
+        with tempfile.TemporaryDirectory() as folder:
+            folder = pathlib.Path(folder)
+            for module in ["sqlite3", "lib/linux-x64-gnu"]:
+                (folder / "tree" / module).mkdir(parents=True)
+                (folder / "tree" / module / "go.mod").write_text(f"module example.com/{module}\n")
+            (folder / "config").write_text("")
+            env = {**os.environ, "GIT_CONFIG_GLOBAL": str(folder / "config"), "GIT_CONFIG_NOSYSTEM": "1"}
+            remote = folder / "remote.git"
+            subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True, env=env)
+            hook = remote / "hooks" / "update"
+            hook.write_text('#!/bin/sh\ncase "$1" in refs/tags/sqlite3/*) echo "rejected $1" >&2; exit 1;; esac\n')
+            hook.chmod(0o755)
+            publish = [shutil.which("bash"), str(pathlib.Path(__file__).parent.parent / "go/scripts/publish.sh"),
+                       (folder / "tree").as_posix(), "0.8.0-dev.9", remote.as_posix()]
+
+            def refs():
+                listed = subprocess.run(["git", "ls-remote", str(remote)], capture_output=True, text=True, env=env)
+                return sorted(line.split("\t")[1] for line in listed.stdout.splitlines())
+            failed = subprocess.run(publish, capture_output=True, text=True, env=env)
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertEqual(refs(), [])
+            hook.unlink()  # the cause is gone: the re-run publishes everything
+            subprocess.run(publish, check=True, capture_output=True, env=env)
+            self.assertEqual(refs(), ["refs/heads/main", "refs/tags/lib/linux-x64-gnu/v0.8.0-dev.9",
+                                      "refs/tags/sqlite3/v0.8.0-dev.9"])
 
 
 if __name__ == "__main__":
