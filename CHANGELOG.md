@@ -3,6 +3,27 @@
 Every PotluckDB release, newest first. Versions with `-dev` or `-rc` are
 pre-releases.
 
+## 0.8.0-dev.4 (2026-11-04)
+
+The Windows archives also hold a MinGW static library, `lib/static/libsqlite3.a`, built with llvm-mingw from the same sources and options, which Go's cgo can link (the MSVC library `lib/static/sqlite3.lib` stays for everything else).
+
+### Highlights
+
+- Go: Windows x64 and ARM64. Build with a MinGW-w64 C compiler for the UCRT runtime, for example llvm-mingw.
+
+### Changes
+
+- This release is the SQLite drop-in library only: the sync engine of 0.8.0-dev.1 to 0.8.0-dev.3, the `?potluckdb=` address parameter, the `app.db.potluckdb` side file and the `potluckdb` command are removed, so databases and folders do not sync in this release. Sync comes back, rebuilt, in later releases.
+
+### Fixes
+
+- Every release archive's `BUILD-INFO.json` now records the commit it was built from. In 0.8.0-dev.3, the Linux archives had "unknown" or an empty value there.
+- The default VFS is SQLite's own again: `sqlite3_vfs_find(NULL)` returns "unix" on Linux and macOS and "win32" on Windows, as with sqlite.org's SQLite, and the list of registered VFSes holds only SQLite's own. In 0.8.0-dev.3 the default was named "potluckdb", with an extra "potluckdb" entry in the list.
+- The library now exports every function that sqlite.org's own `sqlite3.dll` for the same SQLite version exports: 0.8.0-dev.3 lacked `sqlite3_carray_bind`, `sqlite3_carray_bind_v2` and the RBU extension's `sqlite3rbu_*` functions. SQL can now use the `carray()` table-valued function, and `PRAGMA compile_options` lists `ENABLE_CARRAY` and `ENABLE_RBU`.
+- On macOS, modules and programs that link the static library (`lib/static/libsqlite3.a`) now export no PotluckDB-internal name; with 0.8.0-dev.3 they exported one. Linux and macOS builds now check that no name in the static library is visible outside the module that links it.
+- The npm package and both NuGet packages no longer list "sync" among their search tags, since this release has no sync yet.
+- Python on macOS: the `potluckdb` package's compiled module now exports only its init function. In 0.8.0-dev.3 it also exported `potluckdb_vfs_register`, which could clash with another copy of PotluckDB's library in the same program.
+
 ## 0.8.0-dev.3 (2026-10-24)
 
 Databases sync: add `?potluckdb=<bucket>` to a database's address (for example `file:app.db?potluckdb=s3://my-bucket/app`), or put a file `app.db.potluckdb` next to it, and every program running on PotluckDB's library keeps that database the same on all devices that open it. Changes reach the other devices in about a second, and a device without the database gets it from the bucket.
