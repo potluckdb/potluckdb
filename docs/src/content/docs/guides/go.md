@@ -44,9 +44,8 @@ go mod tidy
   wrong setting stops with a message saying what to do.
 - On Windows, use a MinGW-w64 C compiler for Microsoft's UCRT runtime, for
   example [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) or MSYS2's
-  UCRT64, CLANG64 or CLANGARM64. With one for the older MSVCRT runtime
-  (MSYS2's MINGW64, TDM-GCC), programs work, but SQL's `sqrt()` can be off in
-  the last bit.
+  UCRT64, CLANG64 or CLANGARM64. A compiler for the older MSVCRT runtime
+  works too, with the same results (tested: GCC 16.2 from WinLibs, x64).
 - `go mod tidy` and `go mod download` fetch the library for every platform;
   `go build` and `go test` use only your platform's.
 - Databases sync in a later pre-release; for now it runs queries exactly like

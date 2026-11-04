@@ -28,7 +28,7 @@ err = db.QueryRow("SELECT potluckdb_version(), sqlite_version()").Scan(&potluckd
 ```
 
 As with go-sqlite3, cgo must be on and a C compiler installed (gcc or clang;
-on Windows, MinGW-w64 for UCRT: see [Platforms](#platforms)). Unlike
+on Windows, MinGW-w64: see [Platforms](#platforms)). Unlike
 go-sqlite3, nothing of SQLite is compiled: the library comes ready-made, so
 the first build takes seconds instead of a minute.
 
@@ -68,20 +68,18 @@ about 1 MB per platform).
 | Linux x64, arm64 | linux/amd64, linux/arm64 | glibc 2.28 or later |
 | Linux x64, arm64 on Alpine and other musl systems | the same, built with `-tags musl` | musl |
 | macOS Apple silicon, Intel | darwin/arm64, darwin/amd64 | macOS 11 or later |
-| Windows x64, arm64 | windows/amd64, windows/arm64 | Windows 10 or later (arm64: Windows 11); a MinGW-w64 C compiler for UCRT |
+| Windows x64, arm64 | windows/amd64, windows/arm64 | Windows 10 or later (arm64: Windows 11); a MinGW-w64 C compiler |
 
 On Alpine, build with `go build -tags musl`: Go cannot tell glibc from
 musl by itself. A build with the wrong setting stops with a message that
 says which one to use.
 
-On Windows, cgo needs a MinGW-w64 C compiler for Microsoft's UCRT C runtime
-(its name usually says `ucrt`), for example
+On Windows, cgo needs a MinGW-w64 C compiler. Use one for Microsoft's UCRT
+C runtime (its name usually says `ucrt`), for example
 [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) (x64 and arm64; the one
 PotluckDB tests with), MSYS2's UCRT64, CLANG64 or CLANGARM64, or a UCRT
-build of GCC from WinLibs. A compiler for the older MSVCRT runtime (MSYS2's
-MINGW64, TDM-GCC) builds programs that work, but SQL's `sqrt()` then comes
-from that runtime and can be off in the last bit (`sqrt(0.9999999999999999)`
-gives `1`).
+build of GCC from WinLibs. A compiler for the older MSVCRT runtime works
+too, with the same results (tested: GCC 16.2 from WinLibs, x64).
 
 ## Build tags
 

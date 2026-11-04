@@ -168,24 +168,29 @@ with a notice for a release without the library.
 The library is built for UCRT (the C runtime of Windows 10 and later) but
 needs nothing that only UCRT has, so compilers for the older MSVCRT runtime
 link it too. Tested with the 0.8.0-dev.4 archives from core's release-build
-run, before the release:
+runs, before the release:
 
 | Compiler | C runtime | Where | `tools test` | SQL `sqrt()` exact |
 | --- | --- | --- | --- | --- |
 | llvm-mingw 20260922 (clang 23.1) | UCRT | Windows 11 x64; GitHub's windows-2025 and windows-11-arm | all pass | yes |
 | GCC 16.2 (WinLibs) | UCRT | Windows 11 x64 | all pass | yes |
 | GCC 15.2 (in `C:\mingw64` on GitHub's windows-2025) | UCRT | windows-2025 | all pass | yes |
-| GCC 16.2 (WinLibs) | MSVCRT | Windows 11 x64 | all pass | no |
+| GCC 16.2 (WinLibs) | MSVCRT | Windows 11 x64 | all pass | yes (since potluckdb/core#182's fix) |
 
-SQLite calls the platform's `sqrt` for SQL `sqrt()`: the core's design note
-0003 allows `sqrt`, `ceil`, `floor`, `trunc` and `fmod` from the platform,
-since IEEE 754 requires them to be exact. With MSVCRT, mingw-w64 links its
-own `sqrt` in place of msvcrt.dll's, and it rounds twice: 2 of the core's
-5,793 math vectors fail (`sqrt(1.7976931348623157e308)`, and
-`sqrt(0.9999999999999999)`, which gives `1`). The driver does not stop such
-builds; the README and the guide say to use a compiler for UCRT. A
-compiler's runtime shows in its headers: with UCRT, `#include <stdio.h>`
-defines `_UCRT`.
+SQLite registers SQL `sqrt()` with the address of the C function `sqrt`, so
+a library that takes `sqrt` from the platform uses the program's C runtime.
+With MSVCRT, mingw-w64 links its own `sqrt` in place of msvcrt.dll's, and it
+rounds twice: with the first archives, 2 of the core's 5,793 math vectors
+failed (`sqrt(1.7976931348623157e308)`, and `sqrt(0.9999999999999999)`,
+which gave `1`). So the core's MinGW library now computes `sqrt` with the
+CPU's instruction (x64 `sqrtsd`, arm64 `fsqrt`, both correctly rounded), and
+its build fails if the library takes `sqrt` from the platform
+(potluckdb/core#182). With those archives, `tools test` and SQL `sqrt()`
+were tested again on Windows 11 x64 with all three local compilers (the
+rows above that say Windows 11 x64). The README and the guide still name
+UCRT compilers first, since llvm-mingw is the one tested on both CPUs; the
+driver does not refuse others. A compiler's runtime shows in its headers:
+with UCRT, `#include <stdio.h>` defines `_UCRT`.
 
 ## Checks of the program
 
