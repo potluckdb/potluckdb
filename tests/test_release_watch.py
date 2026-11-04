@@ -53,7 +53,8 @@ def run(id, status="completed", conclusion="success", attempt=1, started="2026-1
 
 
 class GitHub:
-    """A fake gh_api: each run's states are returned in turn (the last one stays)."""
+    """A fake gh_api: each run's states, and each workflow's lists of runs, are
+    returned in turn (the last one stays)."""
 
     def __init__(self, states=None, attempts=None, jobs=None, listed=None):
         self.states, self.attempts, self.jobs, self.listed = states or {}, attempts or {}, jobs or {}, listed or {}
@@ -63,7 +64,8 @@ class GitHub:
         self.calls.append((method, path))
         parts = path.split("?")[0].split("/")[4:]  # e.g. runs, 7, attempts, 1, jobs
         if parts[0] == "workflows":
-            return {"workflow_runs": self.listed.get(parts[1], [])}
+            lists = self.listed.get(parts[1], [[]])
+            return {"workflow_runs": lists.pop(0) if len(lists) > 1 else lists[0]}
         run_id, states = int(parts[1]), self.states.get(int(parts[1]))
         if method == "POST":
             return None
@@ -120,25 +122,53 @@ class RegistryTest(unittest.TestCase):
         self.assertEqual(rw.check_pypi(registry({}), V)[1], ["potluckdb 0.8.0.dev3"])
 
 
+def listed(id, created, name=rw.run_name(V)):
+    return {"id": id, "created_at": created, "display_title": name}
+
+
+def start(fake_run, gh=None):
+    clock = Clock()
+    env = {"PYPI_PUBLISHING": "true", "CRATES_IO_PUBLISHING": "true", "NUGET_PUBLISHING": "true",
+           "NPM_PUBLISHING": "false"}
+    with contextlib.redirect_stdout(io.StringIO()):
+        runs = rw.start(V, env, run=fake_run, gh=gh or GitHub(), clock=clock, sleep=clock.sleep)
+    return runs, clock.now - T0
+
+
 class StartTest(unittest.TestCase):
     def test_starts_the_registries_that_are_on(self):
         started = []
 
         def fake_run(cmd, **kw):
             started.append(cmd)
-            if cmd[3] == "rust.yml":
-                return subprocess.CompletedProcess(cmd, 1, "", "HTTP 500: Server Error")
             return subprocess.CompletedProcess(cmd, 0, f"https://github.com/potluckdb/potluckdb/actions/runs/{len(started)}\n", "")
-        env = {"PYPI_PUBLISHING": "true", "CRATES_IO_PUBLISHING": "true", "NUGET_PUBLISHING": "true",
-               "NPM_PUBLISHING": "false"}
-        with contextlib.redirect_stdout(io.StringIO()):
-            runs = rw.start(V, env, run=fake_run, clock=lambda: T0)
+        runs, took = start(fake_run)
         self.assertEqual([c[3] for c in started], ["python.yml", "rust.yml", "dotnet.yml"])
         self.assertEqual(started[0], ["gh", "workflow", "run", "python.yml", "-R", "potluckdb/potluckdb",
                                       "-f", f"version={V}", "-f", "publish=true"])
         self.assertEqual(runs["python"], {"at": "2026-10-24T00:59:40Z", "run": 1})
-        self.assertEqual(runs["rust"], {"at": "2026-10-24T00:59:40Z", "run": None, "error": "HTTP 500: Server Error"})
         self.assertEqual((runs["node"], runs["go"]), ({"off": True}, {"off": True}))
+        self.assertEqual(took, datetime.timedelta(0))
+
+    def test_a_start_that_fails_is_looked_for_before_it_is_tried_again(self):
+        # Every first try gets a 502. python's run started anyway (listed at the
+        # second look), dotnet's starts at the second try, rust's never does.
+        started = []
+
+        def fake_run(cmd, **kw):
+            started.append(cmd[3])
+            if cmd[3] == "dotnet.yml" and len(started) > 3:
+                return subprocess.CompletedProcess(cmd, 0, "https://github.com/potluckdb/potluckdb/actions/runs/5\n", "")
+            if cmd[3] == "rust.yml" and len(started) == 4:
+                raise subprocess.TimeoutExpired(cmd, kw["timeout"])
+            return subprocess.CompletedProcess(cmd, 1, "", "HTTP 502: Bad Gateway")
+        gh = GitHub(listed={"python.yml": [[], [listed(4, "2026-10-24T00:59:41Z")]]})
+        runs, took = start(fake_run, gh)
+        self.assertEqual(started, ["python.yml", "rust.yml", "dotnet.yml", "rust.yml", "dotnet.yml", "rust.yml", "rust.yml"])
+        self.assertEqual(runs["python"], {"at": "2026-10-24T00:59:40Z", "run": 4})
+        self.assertEqual(runs["dotnet"], {"at": "2026-10-24T00:59:40Z", "run": 5})
+        self.assertEqual(runs["rust"], {"at": "2026-10-24T00:59:40Z", "run": None, "error": "HTTP 502: Bad Gateway"})
+        self.assertEqual(took, datetime.timedelta(seconds=3 * 2 * rw.LOOK_EVERY))  # 4 tries in about 2 minutes
 
 
 class WatchTest(unittest.TestCase):
@@ -181,13 +211,21 @@ class WatchTest(unittest.TestCase):
         self.assertEqual((gh.reruns(), clock.now), ([], T0))
         self.assertEqual(regs["dotnet"]["served_at"], rw.parse_time("2026-10-24T01:18:44Z"))  # NuGet's own time
 
-    def test_a_run_without_an_id_is_found_by_workflow_and_time(self):
-        listed = {"rust.yml": [{"id": 9, "created_at": "2026-10-24T01:30:00Z"}, {"id": 8, "created_at": "2026-10-24T00:59:42Z"}]}
-        gh = GitHub(states={8: [run(8)]}, listed=listed)
-        regs = watch(only("rust", at="2026-10-24T00:59:40Z", run=None), gh, registry(SERVED), check_only=True)
-        self.assertEqual(regs["rust"]["run"], 8)
-        self.assertIn(("GET", "repos/potluckdb/potluckdb/actions/workflows/rust.yml/runs?event=workflow_dispatch"
-                       "&branch=main&per_page=100&created=%3E%3D2026-10-24T00%3A58%3A40Z"), gh.calls)
+    def test_a_run_without_an_id_is_looked_for_by_its_name_and_time(self):
+        # Listed at the third look: the oldest run named for this version that
+        # was created at most 5 seconds before it was started.
+        runs = [listed(6, "2026-10-24T00:59:30Z"), listed(7, "2026-10-24T00:59:41Z", name="python"),
+                listed(9, "2026-10-24T01:30:00Z"), listed(8, "2026-10-24T00:59:42Z")]
+        gh = GitHub(states={8: [run(8)]}, listed={"python.yml": [[], [], runs]})
+        regs = watch(only("python", at="2026-10-24T00:59:40Z", run=None, error="HTTP 502"), gh, registry(SERVED))
+        self.assertEqual((regs["python"]["run"], regs["python"]["final"]), (8, "success"))
+        self.assertIn(("GET", "repos/potluckdb/potluckdb/actions/workflows/python.yml/runs?event=workflow_dispatch"
+                       "&branch=main&per_page=100&created=%3E%3D2026-10-24T00%3A59%3A35Z"), gh.calls)
+        # Never listed: not started, after looking for 2 minutes.
+        clock = Clock()
+        regs = watch(only("python", at="2026-10-24T00:59:40Z", run=None, error="HTTP 502"), GitHub(), registry(SERVED), clock)
+        self.assertEqual(clock.now - T0, datetime.timedelta(seconds=rw.LOOK_FOR))
+        self.assertIn("PyPI: python.yml was not started: HTTP 502", rw.problems(regs, V))
 
 
 class TableTest(unittest.TestCase):

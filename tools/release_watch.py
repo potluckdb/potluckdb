@@ -37,6 +37,11 @@ USER_AGENT = "potluckdb-release-watch (https://github.com/potluckdb/potluckdb)"
 POLL = 60  # seconds between checks (GITHUB_TOKEN may make 1,000 requests an hour)
 PROPAGATION = 15 * 60  # how long a registry may take to serve a finished run's packages
 GOAL = 60 * 60  # every registry within 1 hour of the start (core#125)
+DISPATCHES = 4  # tries to start each run: GitHub sometimes answers 5xx, sometimes after starting it
+LOOK_EVERY = 15  # seconds between looks for a run started without its id
+LOOK_FOR = 120  # seconds to look for it before concluding it was not started
+SKEW = datetime.timedelta(seconds=5)  # between this runner's clock and GitHub's
+GH_TIMEOUT = 60  # seconds for one gh command
 REGISTRIES = {  # key: (registry, workflow, the repository variable that turns it on)
     "python": ("PyPI", "python.yml", "PYPI_PUBLISHING"),
     "rust": ("crates.io", "rust.yml", "CRATES_IO_PUBLISHING"),
@@ -155,32 +160,78 @@ def check_crates(get, version):
 CHECKS = {"python": check_pypi, "rust": check_crates, "dotnet": check_nuget, "node": check_npm, "go": check_go}
 
 
-def start(version, env, run=subprocess.run, clock=utcnow):
-    """Starts each registry's publishing run that is on; returns what was started."""
-    runs = {}
+def run_name(version):
+    """The name of a publishing run (each publishing workflow's run-name)."""
+    return f"publish {version}"
+
+
+def dispatch(run, workflow, version):
+    """Asks GitHub once to start a publishing run: (its id or None, the error or None)."""
+    command = ["gh", "workflow", "run", workflow, "-R", REPO, "-f", f"version={version}", "-f", "publish=true"]
+    try:
+        result = run(command, capture_output=True, text=True, timeout=GH_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return None, f"gh workflow run gave no answer in {GH_TIMEOUT} seconds"
+    found = re.search(r"/actions/runs/(\d+)", result.stdout + result.stderr)  # gh 2.87 and later print it
+    if found:
+        return int(found[1]), None
+    return None, (result.stderr or result.stdout).strip()[-300:] or "gh workflow run printed no run"
+
+
+def start(version, env, run=subprocess.run, gh=None, clock=utcnow, sleep=time.sleep):
+    """Starts each registry's publishing run that is on; returns what was started.
+    A start that fails is tried again, up to DISPATCHES times in about 2
+    minutes, but only once looking for the run found none."""
+    gh = gh or gh_api
+    runs, waiting = {}, []
     for key, (registry, workflow, variable) in REGISTRIES.items():
-        if env.get(variable) != "true":
-            value = env.get(variable)
-            print(f"{registry}: not started, the repository variable {variable} is {repr(value) if value else 'not set'}")
-            runs[key] = {"off": True}
+        if env.get(variable) == "true":
+            waiting.append(key)
             continue
-        runs[key] = {"at": iso(clock())}
-        result = run(["gh", "workflow", "run", workflow, "-R", REPO, "-f", f"version={version}", "-f", "publish=true"],
-                     capture_output=True, text=True)
-        found = re.search(r"/actions/runs/(\d+)", result.stdout + result.stderr)  # gh 2.87 and later print it
-        runs[key]["run"] = int(found[1]) if found else None
-        if result.returncode:
-            runs[key]["error"] = (result.stderr or result.stdout).strip()[-300:]
-        print(f"{registry}: {workflow} {runs[key].get('error') or 'run ' + str(runs[key]['run'])}")
+        value = env.get(variable)
+        print(f"{registry}: not started, the repository variable {variable} is {repr(value) if value else 'not set'}")
+        runs[key] = {"off": True}
+    for attempt in range(1, DISPATCHES + 1):
+        for key in waiting:
+            registry, workflow, _ = REGISTRIES[key]
+            reg = runs.setdefault(key, {"at": iso(clock())})
+            reg["run"], reg["error"] = dispatch(run, workflow, version)
+            print(f"{registry}: {workflow} " + (f"run {reg['run']}" if reg["run"] else f"try {attempt}: {reg['error']}"))
+        waiting = [key for key in waiting if not runs[key]["run"]]
+        if not waiting or attempt == DISPATCHES:
+            break
+        for _ in range(2):  # GitHub may have started it despite the error
+            sleep(LOOK_EVERY)
+            for key in waiting:
+                runs[key]["run"] = find_run(gh, REGISTRIES[key][1], parse_time(runs[key]["at"]), run_name(version))
+                if runs[key]["run"]:
+                    print(f"{REGISTRIES[key][0]}: {REGISTRIES[key][1]} run {runs[key]['run']} started after all")
+            waiting = [key for key in waiting if not runs[key]["run"]]
+    for reg in runs.values():
+        if reg.get("run") or not reg.get("error"):
+            reg.pop("error", None)
     return runs
 
 
-def find_run(gh, workflow, since):
-    """The first run of workflow started by hand or by release.yml on main since a time."""
+def find_run(gh, workflow, since, name=None, look_for=0, clock=utcnow, sleep=time.sleep, log=print):
+    """The oldest run of workflow on main started by hand or by release.yml at or
+    after a time (less SKEW) and, if given, with that name. A new run takes a
+    while to be listed: looks every LOOK_EVERY seconds for up to look_for seconds."""
+    since -= SKEW
     query = urllib.parse.urlencode({"event": "workflow_dispatch", "branch": "main", "per_page": 100,
                                     "created": ">=" + iso(since)})
-    runs = gh(f"repos/{REPO}/actions/workflows/{workflow}/runs?{query}")["workflow_runs"]
-    return min(runs, key=lambda r: r["created_at"])["id"] if runs else None
+    until = clock() + datetime.timedelta(seconds=look_for)
+    while True:
+        try:
+            runs = [r for r in gh(f"repos/{REPO}/actions/workflows/{workflow}/runs?{query}")["workflow_runs"]
+                    if parse_time(r["created_at"]) >= since and name in (None, r.get("display_title"))]
+            if runs:
+                return min(runs, key=lambda r: (r["created_at"], r["id"]))["id"]
+        except ApiError as error:
+            log(f"could not list the {workflow} runs: {error}")
+        if clock() >= until:
+            return None
+        sleep(LOOK_EVERY)
 
 
 def watch(version, runs, gh, get, check_only=False, deadline=None, since=None, clock=utcnow, sleep=time.sleep, log=print):
@@ -191,9 +242,12 @@ def watch(version, runs, gh, get, check_only=False, deadline=None, since=None, c
         reg = regs[key] = {"registry": registry, "workflow": workflow, "variable": variable, "off": given.get("off"),
                            "error": given.get("error"), "run": given.get("run"), "reran": False, "final": None,
                            "final_at": None, "what": None, "missing": None, "seen_missing": False, "served_at": None}
-        if not reg["run"] and not reg["off"] and (given.get("at") or since):
-            after = parse_time(given["at"]) - datetime.timedelta(minutes=1) if given.get("at") else since
-            reg["run"] = find_run(gh, workflow, after)
+        if not reg["run"] and not reg["off"] and given.get("at"):  # start() saw no run: look for it a while
+            left = (deadline - clock()).total_seconds() if deadline else LOOK_FOR
+            reg["run"] = find_run(gh, workflow, parse_time(given["at"]), run_name(version),
+                                  0 if check_only else max(0, min(LOOK_FOR, left)), clock, sleep, log)
+        elif not reg["run"] and not reg["off"] and since:  # a past release: its runs have no run-name yet
+            reg["run"] = find_run(gh, workflow, since, log=log)
 
     def settled(reg, now):
         if reg["off"] or not reg["run"] or reg["served_at"]:

@@ -14,6 +14,7 @@
 # The checks run against a release's core archives, so nothing runs before
 # the first release exists; the run then passes with a notice.
 name: go
+run-name: ${{ inputs.publish && format('publish {0}', inputs.version) || '' }} # release_watch.py finds the run by it
 
 on:
   pull_request:

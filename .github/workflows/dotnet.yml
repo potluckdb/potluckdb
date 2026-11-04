@@ -10,6 +10,7 @@
 # The native library is made from a release's core archives, so nothing is
 # built before the first release exists; the run then passes with a notice.
 name: dotnet
+run-name: ${{ inputs.publish && format('publish {0}', inputs.version) || '' }} # release_watch.py finds the run by it
 
 on:
   pull_request:

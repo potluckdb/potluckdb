@@ -12,6 +12,7 @@
 # release on https://github.com/potluckdb/potluckdb/releases). Before the
 # first release exists, the wheel jobs are skipped with a notice.
 name: python
+run-name: ${{ inputs.publish && format('publish {0}', inputs.version) || '' }} # release_watch.py finds the run by it
 
 on:
   pull_request:
