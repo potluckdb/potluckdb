@@ -174,11 +174,12 @@ jobs:
           git add -A CHANGELOG.md changes
           git commit -m "Release notes for $VERSION"
           # main may have moved meanwhile: put the notes on top, if its code
-          # is still what was tested.
+          # is still what was tested. Check HEAD, not the commit below it: the
+          # rebase drops our notes commit if main already has the same change.
           for attempt in 1 2 3; do
             git push origin HEAD:main && break
             git pull --rebase origin main
-            tested HEAD~1
+            tested HEAD
           done
           kind=$([[ "$VERSION" == *-* ]] && echo --prerelease || echo --latest)
           gh release edit "v$VERSION" --draft=false $kind --tag "v$VERSION" \
