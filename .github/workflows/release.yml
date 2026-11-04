@@ -3,7 +3,8 @@
 # platform, builds and tests every package from them, then writes the release
 # notes, publishes the GitHub release and starts each package's publishing.
 # Nothing is published unless every check passed. Nothing is rebuilt.
-# Started by core's release-build workflow.
+# Started by core's release-build workflow. Then waits until every registry
+# serves the version (watch).
 name: release
 
 on:
@@ -16,6 +17,9 @@ on:
         description: "Run every check, publish nothing (stop before finalize)"
         type: boolean
         default: false
+      build_started_at:
+        description: "When core's release-build run started (UTC, ISO 8601), for the timings table"
+        required: false
 
 permissions:
   contents: read
@@ -134,10 +138,14 @@ jobs:
     needs: [test, check-python, check-rust, check-dotnet, check-node, check-go]
     if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # If GitHub hangs: checkout takes at most 3 minutes, publishing 13,
+    # starting the registries 4 and the docs 1.
+    timeout-minutes: 25
     permissions:
       contents: write # release notes, the tag and the release
       actions: write # start the package publishing workflows
+    outputs:
+      runs: ${{ steps.start.outputs.runs }}
     steps:
       - name: Is publishing on for every registry?
         # A release goes out to all of them or to none.
@@ -154,8 +162,10 @@ jobs:
           done
           exit $off
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        timeout-minutes: 3
       - name: Release notes, tag and publish
         id: publish
+        timeout-minutes: 13
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -168,58 +178,86 @@ jobs:
             echo "::error::main has changed since this run's checks started, so they did not test it. Nothing was published: start release.yml again for $VERSION."
             exit 1
           }
-          git fetch -q origin main
+          timeout 60 git fetch -q origin main
           tested origin/main
-          python3 tools/release_notes.py --version "$VERSION" --notes-out ../notes.md
+          # A re-run keeps the date of notes already on main, so they match.
+          date=$(git show origin/main:CHANGELOG.md | sed -n "s/^## $VERSION (\(.*\))\$/\1/p" | head -1 || true)
+          python3 tools/release_notes.py --version "$VERSION" ${date:+--date "$date"} --notes-out ../notes.md
           git add -A CHANGELOG.md changes
           git commit -m "Release notes for $VERSION"
           # main may have moved meanwhile: put the notes on top, if its code
           # is still what was tested. Check HEAD, not the commit below it: the
           # rebase drops our notes commit if main already has the same change.
           for attempt in 1 2 3; do
-            git push origin HEAD:main && break
-            git pull --rebase origin main
+            timeout 60 git push origin HEAD:main && break
+            timeout 60 git pull --rebase origin main
             tested HEAD
           done
+          # GitHub sometimes answers an error after making the change: a
+          # release that is public counts as published, so the next step
+          # starts the registries.
           kind=$([[ "$VERSION" == *-* ]] && echo --prerelease || echo --latest)
-          gh release edit "v$VERSION" --draft=false $kind --tag "v$VERSION" \
-            --target "$(git rev-parse HEAD)" --title "PotluckDB $VERSION" --notes-file ../notes.md
+          published=
+          for attempt in 1 2 3; do
+            if timeout 60 gh release edit "v$VERSION" --draft=false $kind --tag "v$VERSION" \
+                --target "$(git rev-parse HEAD)" --title "PotluckDB $VERSION" --notes-file ../notes.md; then
+              published=1; break
+            fi
+            sleep 10
+            if [ "$(timeout 30 gh release view "v$VERSION" --json isDraft --jq .isDraft || true)" = false ]; then
+              published=1; break
+            fi
+          done
+          [ -n "$published" ] || { echo "::error::GitHub did not confirm that the release v$VERSION is public, so no registry was started. Once GitHub answers again, re-run this run's failed jobs: that finishes publishing and starts the registries."; exit 1; }
           echo "published https://github.com/$GITHUB_REPOSITORY/releases/tag/v$VERSION"
-      - name: Publish the Python package
-        if: vars.PYPI_PUBLISHING == 'true'
+      - name: Start the package publishing workflows
+        # Each registry trusts its own workflow file, so each one runs on its
+        # own, from the published release's exact archives. A registry whose
+        # <X>_PUBLISHING variable is not "true" is not started, and watch fails.
+        # It takes at most 4 minutes; watch looks for any run it did not see.
+        id: start
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run python.yml -R "$GITHUB_REPOSITORY" -f version="$VERSION" -f publish=true
-      - name: Publish the Rust crate
-        if: vars.CRATES_IO_PUBLISHING == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh workflow run rust.yml -R "$GITHUB_REPOSITORY" -f version="$VERSION" -f publish=true
-      - name: Publish the .NET packages
-        if: vars.NUGET_PUBLISHING == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh workflow run dotnet.yml -R "$GITHUB_REPOSITORY" -f version="$VERSION" -f publish=true
-      - name: Publish the npm packages
-        # Each registry trusts its own workflow file, so it runs on its own,
-        # from the published release's exact archives. On once npm trusts it.
-        if: vars.NPM_PUBLISHING == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh workflow run node.yml -R "$GITHUB_REPOSITORY" -f version="$VERSION" -f publish=true
-      - name: Publish the Go modules
-        # go.yml writes the release's modules to potluckdb-go and tags them.
-        # On once its deploy key is set up (go/DESIGN.md).
-        if: vars.GO_PUBLISHING == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh workflow run go.yml -R "$GITHUB_REPOSITORY" -f version="$VERSION" -f publish=true
+          PYPI_PUBLISHING: ${{ vars.PYPI_PUBLISHING }}
+          CRATES_IO_PUBLISHING: ${{ vars.CRATES_IO_PUBLISHING }}
+          NUGET_PUBLISHING: ${{ vars.NUGET_PUBLISHING }}
+          NPM_PUBLISHING: ${{ vars.NPM_PUBLISHING }}
+          GO_PUBLISHING: ${{ vars.GO_PUBLISHING }} # go.yml: once its deploy key is set up (go/DESIGN.md)
+        run: python3 tools/release_watch.py start --version "$VERSION"
       - name: Publish the docs
         # docs.yml deploys the release's docs/ to docs.potluckdb.com. Runs
         # even if starting a registry workflow above failed: the release is out.
         if: ${{ !cancelled() && steps.publish.outcome == 'success' && vars.DOCS_PUBLISHING == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run docs.yml -R "$GITHUB_REPOSITORY" -f version="$VERSION"
+        run: timeout 60 gh workflow run docs.yml -R "$GITHUB_REPOSITORY" -f version="$VERSION"
+
+  watch:
+    # Waits for each publishing run (re-running its failed jobs once), checks
+    # that every registry serves the version, and writes the time of each
+    # step to the job summary and the artifact release-timings. The timeout
+    # allows the slowest run seen (go.yml, 25 minutes with a stalled mirror)
+    # twice, the registries' 15 minutes and some margin; the script stops
+    # 10 minutes before it to write the table.
+    needs: finalize
+    if: ${{ !cancelled() && needs.finalize.outputs.runs }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 80
+    permissions:
+      contents: read
+      actions: write # re-run a publishing run's failed jobs
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Wait for the publishing runs and the registries
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUNS: ${{ needs.finalize.outputs.runs }}
+          BUILD_STARTED_AT: ${{ inputs.build_started_at }}
+        run: |
+          python3 tools/release_watch.py watch --version "$VERSION" --runs "$RUNS" --release-run "$GITHUB_RUN_ID" \
+            --build-started-at "$BUILD_STARTED_AT" --deadline-minutes 70 --summary "$GITHUB_STEP_SUMMARY" --out timings
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: release-timings
+          path: timings/

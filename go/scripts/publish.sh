@@ -54,5 +54,6 @@ for tag in $tags; do
   git tag "$tag"
   refs+=("refs/tags/$tag")
 done
-git push -q origin "${refs[@]}"
+# All or nothing: a re-run can't add to some of the tags (see above).
+git push -q --atomic origin "${refs[@]}"
 echo "published $(git rev-parse HEAD) with tags:" $tags

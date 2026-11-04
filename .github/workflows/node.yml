@@ -11,6 +11,7 @@
 # Called with archives: run (release.yml, before it publishes), the archives
 # are those of the calling run's artifact dist: the draft release's.
 name: node
+run-name: ${{ inputs.publish && format('publish {0}', inputs.version) || '' }} # release_watch.py finds the run by it
 
 on:
   pull_request:
