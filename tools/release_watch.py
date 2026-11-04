@@ -1,0 +1,390 @@
+"""Starts a release's package publishing runs, waits for them, checks that
+every registry serves the version, and writes how long each step took.
+
+    python tools/release_watch.py start --version 0.8.0-dev.4
+        (release.yml) Starts each registry's workflow with publish=true if its
+        <X>_PUBLISHING variable (passed in the environment) is "true", and
+        writes runs=<json> to $GITHUB_OUTPUT for the watch job.
+    python tools/release_watch.py watch --version 0.8.0-dev.4 --runs '<json>'
+            [--release-run ID] [--build-started-at TIME] [--summary FILE] [--out DIR]
+        (release.yml) Waits for each run, re-runs its failed jobs once, then
+        waits up to 15 minutes for its registry to serve the version, and
+        writes the timings table. Fails if a registry is off, a run failed or
+        a registry does not serve every package.
+    python tools/release_watch.py watch --version 0.8.0-dev.3 --check-only
+        Read only, for a past release: finds its runs, never re-runs or
+        waits, and prints the table.
+"""
+import argparse
+import datetime
+import gzip
+import json
+import os
+import pathlib
+import re
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "python"))
+from core_archive import TARGETS, pep440  # noqa: E402
+
+REPO = "potluckdb/potluckdb"
+USER_AGENT = "potluckdb-release-watch (https://github.com/potluckdb/potluckdb)"
+POLL = 60  # seconds between checks (GITHUB_TOKEN may make 1,000 requests an hour)
+PROPAGATION = 15 * 60  # how long a registry may take to serve a finished run's packages
+GOAL = 60 * 60  # every registry within 1 hour of the start (core#125)
+REGISTRIES = {  # key: (registry, workflow, the repository variable that turns it on)
+    "python": ("PyPI", "python.yml", "PYPI_PUBLISHING"),
+    "rust": ("crates.io", "rust.yml", "CRATES_IO_PUBLISHING"),
+    "dotnet": ("NuGet", "dotnet.yml", "NUGET_PUBLISHING"),
+    "node": ("npm", "node.yml", "NPM_PUBLISHING"),
+    "go": ("Go module proxy", "go.yml", "GO_PUBLISHING"),
+}
+NUGET_IDS = ["PotluckDB.SQLitePCLRaw", "PotluckDB.Data.Sqlite"]  # dotnet/scripts/pack.py
+GO_MODULES = "github.com/potluckdb/potluckdb-go"  # go/tools/dist.go
+
+
+def parse_time(text):
+    """A UTC time from GitHub or a registry (fractions of a second dropped)."""
+    if not text:
+        return None
+    text = re.sub(r"\.\d+", "", text).replace("Z", "+00:00")
+    return datetime.datetime.fromisoformat(text).astimezone(datetime.timezone.utc)
+
+
+def iso(t):
+    return t.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def utcnow():
+    return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
+
+
+def http_get(url):
+    """(status, JSON or text) of a public URL; status None if it can't be reached."""
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept-Encoding": "gzip"})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            status, body = response.status, response.read()
+            if response.headers.get("Content-Encoding") == "gzip":
+                body = gzip.decompress(body)
+    except urllib.error.HTTPError as error:
+        return error.code, None
+    except OSError:  # unreachable, timed out
+        return None, None
+    try:
+        return status, json.loads(body)
+    except ValueError:
+        return status, body.decode(errors="replace")
+
+
+class ApiError(Exception):
+    pass
+
+
+def gh_api(path, method="GET"):
+    """GitHub's REST API through gh (GH_TOKEN), tried 3 times."""
+    for attempt in range(3):
+        result = subprocess.run(["gh", "api", "-X", method, path], capture_output=True, text=True)
+        if result.returncode == 0:
+            return json.loads(result.stdout) if result.stdout.strip() else None
+        if attempt < 2:
+            time.sleep(10)
+    raise ApiError(f"gh api -X {method} {path}: {result.stderr.strip()}")
+
+
+def get_json(get, url):
+    status, data = get(url)
+    return data if status == 200 and isinstance(data, dict) else None
+
+
+# Each check returns (what it checked, missing packages, the registry's own
+# time for the last package, or None).
+def check_pypi(get, version):
+    name = f"potluckdb {pep440(version)}"
+    files = (get_json(get, f"https://pypi.org/pypi/potluckdb/{pep440(version)}/json") or {}).get("urls")
+    if not files:
+        return name, [name], None
+    return f"{name} ({len(files)} files)", [], max(parse_time(f["upload_time_iso_8601"]) for f in files)
+
+
+def check_npm(get, version):
+    names = [f"@potluckdb/{target}" for target in TARGETS] + ["potluckdb"]
+    missing = [n for n in names if get(f"https://registry.npmjs.org/{n}/{version}")[0] != 200]
+    published = None if missing else (get_json(get, "https://registry.npmjs.org/potluckdb") or {}).get("time", {}).get(version)
+    return f"potluckdb and {len(TARGETS)} platform packages {version}", missing, parse_time(published)
+
+
+def check_nuget(get, version):
+    missing, times = [], []
+    for package in NUGET_IDS:
+        index = get_json(get, f"https://api.nuget.org/v3-flatcontainer/{package.lower()}/index.json") or {}
+        if version.lower() not in index.get("versions", []):
+            missing.append(package)
+            continue
+        leaf = get_json(get, f"https://api.nuget.org/v3/registration5-gz-semver2/{package.lower()}/{version.lower()}.json")
+        times.append(parse_time((leaf or {}).get("published")))
+    published = None if missing or None in times else max(times)
+    return f"{' and '.join(NUGET_IDS)} {version}", missing, published
+
+
+def check_go(get, version):
+    # The driver's go.mod requires the library module of every platform it has.
+    base = f"https://proxy.golang.org/{GO_MODULES}"
+    driver = get_json(get, f"{base}/sqlite3/@v/v{version}.info")
+    status, mod = get(f"{base}/sqlite3/@v/v{version}.mod")
+    what = f"{GO_MODULES}/sqlite3 and its lib modules v{version}"
+    if not driver or status != 200 or not isinstance(mod, str):
+        return what, [f"{GO_MODULES}/sqlite3"], None
+    libs = re.findall(rf"^\s*{re.escape(GO_MODULES)}/(lib/\S+) v{re.escape(version)}\s*$", mod, re.M)
+    missing = [f"{GO_MODULES}/{lib}" for lib in libs if not get_json(get, f"{base}/{lib}/@v/v{version}.info")]
+    what = f"{GO_MODULES}/sqlite3 and {len(libs)} lib modules v{version}"
+    return what, missing, None if missing else parse_time(driver.get("Time"))
+
+
+def check_crates(get, version):
+    found = get_json(get, f"https://crates.io/api/v1/crates/potluckdb/{version}")
+    name = f"potluckdb {version}"
+    return (name, [], parse_time(found["version"]["created_at"])) if found else (name, [name], None)
+
+
+CHECKS = {"python": check_pypi, "rust": check_crates, "dotnet": check_nuget, "node": check_npm, "go": check_go}
+
+
+def start(version, env, run=subprocess.run, clock=utcnow):
+    """Starts each registry's publishing run that is on; returns what was started."""
+    runs = {}
+    for key, (registry, workflow, variable) in REGISTRIES.items():
+        if env.get(variable) != "true":
+            value = env.get(variable)
+            print(f"{registry}: not started, the repository variable {variable} is {repr(value) if value else 'not set'}")
+            runs[key] = {"off": True}
+            continue
+        runs[key] = {"at": iso(clock())}
+        result = run(["gh", "workflow", "run", workflow, "-R", REPO, "-f", f"version={version}", "-f", "publish=true"],
+                     capture_output=True, text=True)
+        found = re.search(r"/actions/runs/(\d+)", result.stdout + result.stderr)  # gh 2.87 and later print it
+        runs[key]["run"] = int(found[1]) if found else None
+        if result.returncode:
+            runs[key]["error"] = (result.stderr or result.stdout).strip()[-300:]
+        print(f"{registry}: {workflow} {runs[key].get('error') or 'run ' + str(runs[key]['run'])}")
+    return runs
+
+
+def find_run(gh, workflow, since):
+    """The first run of workflow started by hand or by release.yml on main since a time."""
+    query = urllib.parse.urlencode({"event": "workflow_dispatch", "branch": "main", "per_page": 100,
+                                    "created": ">=" + iso(since)})
+    runs = gh(f"repos/{REPO}/actions/workflows/{workflow}/runs?{query}")["workflow_runs"]
+    return min(runs, key=lambda r: r["created_at"])["id"] if runs else None
+
+
+def watch(version, runs, gh, get, check_only=False, deadline=None, since=None, clock=utcnow, sleep=time.sleep, log=print):
+    """Waits for the runs and the registries; returns the state of each registry."""
+    regs = {}
+    for key, (registry, workflow, variable) in REGISTRIES.items():
+        given = runs.get(key, {})
+        reg = regs[key] = {"registry": registry, "workflow": workflow, "variable": variable, "off": given.get("off"),
+                           "error": given.get("error"), "run": given.get("run"), "reran": False, "final": None,
+                           "final_at": None, "what": None, "missing": None, "seen_missing": False, "served_at": None}
+        if not reg["run"] and not reg["off"] and (given.get("at") or since):
+            after = parse_time(given["at"]) - datetime.timedelta(minutes=1) if given.get("at") else since
+            reg["run"] = find_run(gh, workflow, after)
+
+    def settled(reg, now):
+        if reg["off"] or not reg["run"] or reg["served_at"]:
+            return True
+        if check_only:
+            return reg["missing"] is not None
+        if not reg["final"] or reg["missing"] is None:
+            return False
+        return reg["final"] != "success" or (now - reg["final_at"]).total_seconds() >= PROPAGATION
+
+    while True:
+        now = clock()
+        for key, reg in regs.items():
+            if settled(reg, now):
+                continue
+            if not reg["final"]:
+                run = gh(f"repos/{REPO}/actions/runs/{reg['run']}")
+                if run["status"] == "completed" and not (reg["reran"] and run["run_attempt"] == 1):
+                    if run["conclusion"] != "success" and run["run_attempt"] == 1 and not check_only:
+                        log(f"{iso(now)} {reg['workflow']} run {reg['run']} ended in {run['conclusion']}: re-running its failed jobs")
+                        try:
+                            gh(f"repos/{REPO}/actions/runs/{reg['run']}/rerun-failed-jobs", "POST")
+                            reg["reran"] = True
+                        except ApiError as error:
+                            log(f"could not re-run it: {error}")
+                            reg["final"], reg["final_at"] = run["conclusion"], now
+                    else:
+                        reg["final"], reg["final_at"] = run["conclusion"], now
+                        log(f"{iso(now)} {reg['workflow']} run {reg['run']} ended in {run['conclusion']}")
+            # Ask a registry only once its run is over (or in a check of a past
+            # release): proxy.golang.org caches a "not found" for 30 minutes.
+            if reg["final"] or check_only:
+                reg["what"], reg["missing"], published = CHECKS[key](get, version)
+                if reg["missing"]:
+                    reg["seen_missing"] = True
+                else:
+                    reg["served_at"] = now if reg["seen_missing"] or not published else published
+                    log(f"{iso(now)} {reg['registry']} serves {reg['what']}")
+        if all(settled(reg, now) for reg in regs.values()) or check_only or (deadline and now >= deadline):
+            return regs
+        sleep(POLL)
+
+
+def problems(regs, version):
+    """What went wrong, one line per problem."""
+    found = []
+    for reg in regs.values():
+        name, workflow = reg["registry"], reg["workflow"]
+        if reg["off"]:
+            found.append(f"{name}: {workflow} was not started because the repository variable {reg['variable']} is not 'true'")
+        elif not reg["run"]:
+            found.append(f"{name}: {workflow} was not started{': ' + reg['error'] if reg['error'] else ''}")
+        elif not reg["final"]:
+            found.append(f"{name}: {workflow} run {reg['run']} had not finished in time")
+        elif reg["final"] != "success":
+            again = ", also after re-running its failed jobs" if reg["reran"] else ""
+            found.append(f"{name}: {workflow} run https://github.com/{REPO}/actions/runs/{reg['run']} ended in {reg['final']}{again}")
+        if reg["missing"]:
+            found.append(f"{name} does not serve {version} of: {', '.join(reg['missing'])}")
+    return found
+
+
+def run_rows(gh, run_id, workflow):
+    """(step, start, end, result) for each attempt of a run and its jobs (matrix jobs as one row)."""
+    run = gh(f"repos/{REPO}/actions/runs/{run_id}")
+    rows = []
+    for attempt in range(1, run["run_attempt"] + 1):
+        this = run if attempt == run["run_attempt"] else gh(f"repos/{REPO}/actions/runs/{run_id}/attempts/{attempt}")
+        label = f"{workflow} run {run_id}" + (f", attempt {attempt}" if run["run_attempt"] > 1 else "")
+        rows.append((label, parse_time(this["run_started_at"]),
+                     parse_time(this["updated_at"]) if this["status"] == "completed" else None,
+                     this["conclusion"] or this["status"]))
+        jobs = gh(f"repos/{REPO}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100")["jobs"]
+        groups = {}
+        for job in jobs:
+            if job.get("run_attempt", attempt) == attempt and job["conclusion"] != "skipped":
+                groups.setdefault(re.split(r"[ (]", job["name"])[0], []).append(job)
+        for name, group in sorted(groups.items(), key=lambda g: min(j["started_at"] or "~" for j in g[1])):
+            starts = [parse_time(j["started_at"]) for j in group if j["started_at"]]
+            ends = [parse_time(j["completed_at"]) for j in group]
+            results = sorted({j["conclusion"] or j["status"] for j in group})
+            rows.append((f"- {name}" + (f" ({len(group)} jobs)" if len(group) > 1 else ""), min(starts, default=None),
+                         None if None in ends else max(ends), ", ".join(results)))
+    return rows
+
+
+def span(start, end):
+    if not start or not end:
+        return ""
+    seconds = int((end - start).total_seconds())
+    if seconds >= 86400:
+        return f"{seconds // 86400}d {seconds % 86400 // 3600}h"
+    if seconds >= 3600:
+        return f"{seconds // 3600}h {seconds % 3600 // 60:02d}m"
+    return f"{seconds // 60}m {seconds % 60:02d}s"
+
+
+def render(version, rows, origin):
+    def at(t):
+        return "" if not t else t.strftime("%H:%M:%S" if t.date() == origin.date() else "%m-%d %H:%M:%S")
+    lines = [f"### Release {version}: timings", "",
+             f"Times are UTC, on {origin:%Y-%m-%d} unless a date is shown. \"Done after\" counts from {at(origin)}.", "",
+             "| Step | Start | End | Duration | Done after | Result |", "| --- | --- | --- | --- | --- | --- |"]
+    lines += [f"| {step} | {at(start)} | {at(end)} | {span(start, end)} | {span(origin, end)} | {result} |"
+              for step, start, end, result in rows]
+    lines += ["", "A registry's time is when it first served every package: the registry's own publish time "
+                  "if it served them at the first check, else the time of the first check that found them all."]
+    return "\n".join(lines) + "\n"
+
+
+def timings(version, regs, gh, release_run, build_started_at):
+    """The rows of the table, and the time they count from."""
+    rows = []
+    release = gh(f"repos/{REPO}/actions/runs/{release_run}") if release_run else None
+    origin = build_started_at or (parse_time(release["created_at"]) if release else utcnow())
+    if build_started_at:
+        rows.append(("core release-build (potluckdb/core)", build_started_at,
+                     parse_time(release["created_at"]) if release else None, ""))
+    if release_run:
+        rows += run_rows(gh, release_run, "release.yml")
+    for reg in regs.values():
+        if reg["run"]:
+            rows += run_rows(gh, reg["run"], reg["workflow"])
+        if reg["off"]:
+            result = f"off: {reg['variable']} is not 'true'"
+        elif reg["served_at"]:
+            late = (reg["served_at"] - origin).total_seconds() > GOAL
+            result = "served" + (" (later than the 1 hour goal)" if late else "")
+        elif reg["missing"]:
+            result = "missing: " + ", ".join(reg["missing"])
+        else:
+            result = "not checked: no finished run"
+        rows.append((f"**{reg['registry']}**: {reg['what'] or version}", None, reg["served_at"], result))
+    return rows, origin
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("command", choices=["start", "watch"])
+    parser.add_argument("--version", required=True)
+    parser.add_argument("--runs", default="{}", help="JSON from start (default: find the runs)")
+    parser.add_argument("--release-run", type=int, help="the release.yml run (default: the one that published the release)")
+    parser.add_argument("--build-started-at", default="", help="when core's release-build run started")
+    parser.add_argument("--check-only", action="store_true", help="read only: no re-runs, no waiting")
+    parser.add_argument("--deadline-minutes", type=float, default=70)
+    parser.add_argument("--summary", help="append the table to this file (e.g. $GITHUB_STEP_SUMMARY)")
+    parser.add_argument("--out", help="write timings.md and timings.json to this folder")
+    args = parser.parse_args(argv)
+    version = args.version.removeprefix("v")
+
+    if args.command == "start":
+        runs = start(version, os.environ)
+        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+            out.write(f"runs={json.dumps(runs)}\n")
+        return 0
+
+    runs = json.loads(args.runs or "{}")
+    since, release_run = None, args.release_run
+    if not runs or not release_run:  # a past release: find its runs from when it was published
+        published = parse_time(gh_api(f"repos/{REPO}/releases/tags/v{version}")["published_at"])
+        since = published
+        if not release_run:
+            query = urllib.parse.urlencode({"event": "workflow_dispatch", "per_page": 100, "created": "<=" + iso(published)})
+            release_run = next((r["id"] for r in gh_api(f"repos/{REPO}/actions/workflows/release.yml/runs?{query}")["workflow_runs"]
+                                if parse_time(r["updated_at"]) >= published), None)
+    deadline = utcnow() + datetime.timedelta(minutes=args.deadline_minutes)
+    regs = watch(version, runs, gh_api, http_get, args.check_only, deadline, since)
+    try:
+        build_started_at = parse_time(args.build_started_at)
+    except ValueError:
+        print(f"warning: --build-started-at {args.build_started_at!r} is not a time; the table starts at release.yml")
+        build_started_at = None
+    rows, origin = timings(version, regs, gh_api, release_run, build_started_at)
+    table = render(version, rows, origin)
+    found = problems(regs, version)
+    table += "".join(f"\n- {line}" for line in found) + ("\n" if found else "")
+    print(table)
+    if args.summary:
+        with open(args.summary, "a", encoding="utf-8") as out:
+            out.write(table)
+    if args.out:
+        folder = pathlib.Path(args.out)
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "timings.md").write_text(table, encoding="utf-8")
+        (folder / "timings.json").write_text(json.dumps(
+            [{"step": s, "start": a and iso(a), "end": b and iso(b), "result": r} for s, a, b, r in rows], indent=1) + "\n")
+    for line in found:
+        print(f"::error title=Release {version}::{line}" if os.environ.get("GITHUB_ACTIONS") else f"error: {line}",
+              file=sys.stderr)
+    return 1 if found else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

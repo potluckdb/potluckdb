@@ -1,7 +1,9 @@
 # Publishes a release that core's release-build workflow prepared as a draft
 # (PRD E5): checks the exact files and their signatures, tests them on every
 # platform, then writes the release notes and publishes the GitHub release.
-# Nothing is rebuilt. Started by core's release-build workflow.
+# Nothing is rebuilt. Started by core's release-build workflow. Then starts
+# each registry's publishing workflow and waits until every registry serves
+# the version (watch).
 name: release
 
 on:
@@ -10,6 +12,9 @@ on:
       version:
         description: "Version of the draft release, e.g. 0.8.0-dev.1"
         required: true
+      build_started_at:
+        description: "When core's release-build run started (UTC, ISO 8601), for the timings table"
+        required: false
 
 permissions:
   contents: read
@@ -98,6 +103,8 @@ jobs:
     permissions:
       contents: write # release notes, the tag and the release
       actions: write # start the package publishing workflows
+    outputs:
+      runs: ${{ steps.start.outputs.runs }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Release notes, tag and publish
@@ -119,37 +126,19 @@ jobs:
           gh release edit "v$VERSION" --draft=false $kind --tag "v$VERSION" \
             --target "$(git rev-parse HEAD)" --title "PotluckDB $VERSION" --notes-file ../notes.md
           echo "published https://github.com/$GITHUB_REPOSITORY/releases/tag/v$VERSION"
-      - name: Publish the Python package
-        if: vars.PYPI_PUBLISHING == 'true'
+      - name: Start the package publishing workflows
+        # Each registry trusts its own workflow file, so each one runs on its
+        # own, from the published release's exact archives. A registry whose
+        # <X>_PUBLISHING variable is not "true" is not started, and watch fails.
+        id: start
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run python.yml -R "$GITHUB_REPOSITORY" -f version="$VERSION" -f publish=true
-      - name: Publish the Rust crate
-        if: vars.CRATES_IO_PUBLISHING == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh workflow run rust.yml -R "$GITHUB_REPOSITORY" -f version="$VERSION" -f publish=true
-      - name: Publish the .NET packages
-        if: vars.NUGET_PUBLISHING == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh workflow run dotnet.yml -R "$GITHUB_REPOSITORY" -f version="$VERSION" -f publish=true
-      - name: Publish the npm packages
-        # Each registry trusts its own workflow file, so it runs on its own,
-        # from the published release's exact archives. On once npm trusts it.
-        if: vars.NPM_PUBLISHING == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh workflow run node.yml -R "$GITHUB_REPOSITORY" -f version="$VERSION" -f publish=true
-      - name: Publish the Go modules
-        # go.yml writes the release's modules to potluckdb-go and tags them.
-        # On once its deploy key is set up (go/DESIGN.md).
-        if: vars.GO_PUBLISHING == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh workflow run go.yml -R "$GITHUB_REPOSITORY" -f version="$VERSION" -f publish=true
+          PYPI_PUBLISHING: ${{ vars.PYPI_PUBLISHING }}
+          CRATES_IO_PUBLISHING: ${{ vars.CRATES_IO_PUBLISHING }}
+          NUGET_PUBLISHING: ${{ vars.NUGET_PUBLISHING }}
+          NPM_PUBLISHING: ${{ vars.NPM_PUBLISHING }}
+          GO_PUBLISHING: ${{ vars.GO_PUBLISHING }} # go.yml: once its deploy key is set up (go/DESIGN.md)
+        run: python3 tools/release_watch.py start --version "$VERSION"
       - name: Publish the docs
         # docs.yml deploys the release's docs/ to docs.potluckdb.com. Runs
         # even if starting a registry workflow above failed: the release is out.
@@ -157,3 +146,33 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run docs.yml -R "$GITHUB_REPOSITORY" -f version="$VERSION"
+
+  watch:
+    # Waits for each publishing run (re-running its failed jobs once), checks
+    # that every registry serves the version, and writes the time of each
+    # step to the job summary and the artifact release-timings. The timeout
+    # allows the slowest run seen (go.yml, 25 minutes with a stalled mirror)
+    # twice, the registries' 15 minutes and some margin; the script stops
+    # 10 minutes before it to write the table.
+    needs: finalize
+    if: ${{ !cancelled() && needs.finalize.outputs.runs }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 80
+    permissions:
+      contents: read
+      actions: write # re-run a publishing run's failed jobs
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Wait for the publishing runs and the registries
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUNS: ${{ needs.finalize.outputs.runs }}
+          BUILD_STARTED_AT: ${{ inputs.build_started_at }}
+        run: |
+          python3 tools/release_watch.py watch --version "$VERSION" --runs "$RUNS" --release-run "$GITHUB_RUN_ID" \
+            --build-started-at "$BUILD_STARTED_AT" --deadline-minutes 70 --summary "$GITHUB_STEP_SUMMARY" --out timings
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: release-timings
+          path: timings/
