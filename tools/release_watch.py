@@ -42,7 +42,7 @@ LOOK_EVERY = 15  # seconds between looks for a run started without its id
 LOOK_FOR = 120  # seconds to look for it before concluding it was not started
 SKEW = datetime.timedelta(seconds=5)  # between this runner's clock and GitHub's
 GH_TIMEOUT = 60  # seconds for one gh command
-START_BUDGET = 4 * 60  # seconds for all of start(), well within finalize's 10 minutes
+START_BUDGET = 4 * 60  # seconds for all of start(), which finalize's timeout leaves after publishing
 START_CALL = 30  # seconds for one gh command in start(), tried once: the 5 first starts fit the budget
 REGISTRIES = {  # key: (registry, workflow, the repository variable that turns it on)
     "python": ("PyPI", "python.yml", "PYPI_PUBLISHING"),

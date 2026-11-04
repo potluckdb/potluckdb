@@ -138,7 +138,9 @@ jobs:
     needs: [test, check-python, check-rust, check-dotnet, check-node, check-go]
     if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # If GitHub hangs, publishing takes at most 12 minutes, starting the
+    # registries 4 and the docs 1.
+    timeout-minutes: 20
     permissions:
       contents: write # release notes, the tag and the release
       actions: write # start the package publishing workflows
@@ -174,7 +176,7 @@ jobs:
             echo "::error::main has changed since this run's checks started, so they did not test it. Nothing was published: start release.yml again for $VERSION."
             exit 1
           }
-          git fetch -q origin main
+          timeout 60 git fetch -q origin main
           tested origin/main
           python3 tools/release_notes.py --version "$VERSION" --notes-out ../notes.md
           git add -A CHANGELOG.md changes
@@ -183,13 +185,26 @@ jobs:
           # is still what was tested. Check HEAD, not the commit below it: the
           # rebase drops our notes commit if main already has the same change.
           for attempt in 1 2 3; do
-            git push origin HEAD:main && break
-            git pull --rebase origin main
+            timeout 60 git push origin HEAD:main && break
+            timeout 60 git pull --rebase origin main
             tested HEAD
           done
+          # GitHub sometimes answers an error after making the change: a
+          # release that is public counts as published, so the next step
+          # starts the registries.
           kind=$([[ "$VERSION" == *-* ]] && echo --prerelease || echo --latest)
-          gh release edit "v$VERSION" --draft=false $kind --tag "v$VERSION" \
-            --target "$(git rev-parse HEAD)" --title "PotluckDB $VERSION" --notes-file ../notes.md
+          published=
+          for attempt in 1 2 3; do
+            if timeout 60 gh release edit "v$VERSION" --draft=false $kind --tag "v$VERSION" \
+                --target "$(git rev-parse HEAD)" --title "PotluckDB $VERSION" --notes-file ../notes.md; then
+              published=1; break
+            fi
+            sleep 10
+            if [ "$(timeout 30 gh release view "v$VERSION" --json isDraft --jq .isDraft || true)" = false ]; then
+              published=1; break
+            fi
+          done
+          [ -n "$published" ] || { echo "::error::Could not publish the release v$VERSION: it is still a draft."; exit 1; }
           echo "published https://github.com/$GITHUB_REPOSITORY/releases/tag/v$VERSION"
       - name: Start the package publishing workflows
         # Each registry trusts its own workflow file, so each one runs on its
@@ -211,7 +226,7 @@ jobs:
         if: ${{ !cancelled() && steps.publish.outcome == 'success' && vars.DOCS_PUBLISHING == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run docs.yml -R "$GITHUB_REPOSITORY" -f version="$VERSION"
+        run: timeout 60 gh workflow run docs.yml -R "$GITHUB_REPOSITORY" -f version="$VERSION"
 
   watch:
     # Waits for each publishing run (re-running its failed jobs once), checks
