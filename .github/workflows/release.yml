@@ -139,6 +139,20 @@ jobs:
       contents: write # release notes, the tag and the release
       actions: write # start the package publishing workflows
     steps:
+      - name: Is publishing on for every registry?
+        # A release goes out to all of them or to none.
+        env:
+          PYPI_PUBLISHING: ${{ vars.PYPI_PUBLISHING }}
+          CRATES_IO_PUBLISHING: ${{ vars.CRATES_IO_PUBLISHING }}
+          NUGET_PUBLISHING: ${{ vars.NUGET_PUBLISHING }}
+          NPM_PUBLISHING: ${{ vars.NPM_PUBLISHING }}
+          GO_PUBLISHING: ${{ vars.GO_PUBLISHING }}
+        run: |
+          off=0
+          for v in PYPI_PUBLISHING CRATES_IO_PUBLISHING NUGET_PUBLISHING NPM_PUBLISHING GO_PUBLISHING; do
+            [ "${!v}" = true ] || { echo "::error::The repository variable $v is not 'true'. Nothing was published."; off=1; }
+          done
+          exit $off
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Release notes, tag and publish
         id: publish
