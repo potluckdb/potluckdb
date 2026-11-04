@@ -1,10 +1,13 @@
 import contextlib
 import datetime
 import io
+import json
 import pathlib
 import subprocess
 import sys
+import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "tools"))
 import release_watch as rw  # noqa: E402
@@ -56,19 +59,27 @@ class GitHub:
     """A fake gh_api: each run's states, and each workflow's lists of runs, are
     returned in turn (the last one stays)."""
 
-    def __init__(self, states=None, attempts=None, jobs=None, listed=None):
+    def __init__(self, states=None, attempts=None, jobs=None, listed=None, post_errors=None):
         self.states, self.attempts, self.jobs, self.listed = states or {}, attempts or {}, jobs or {}, listed or {}
-        self.calls = []
+        self.post_errors, self.calls = post_errors or [], []
 
     def __call__(self, path, method="GET"):
         self.calls.append((method, path))
+        answer = self.answer(path, method)
+        if isinstance(answer, Exception):  # GitHub did not answer
+            raise answer
+        return answer
+
+    def answer(self, path, method):
         parts = path.split("?")[0].split("/")[4:]  # e.g. runs, 7, attempts, 1, jobs
         if parts[0] == "workflows":
             lists = self.listed.get(parts[1], [[]])
             return {"workflow_runs": lists.pop(0) if len(lists) > 1 else lists[0]}
         run_id, states = int(parts[1]), self.states.get(int(parts[1]))
         if method == "POST":
-            return None
+            return self.post_errors.pop(0) if self.post_errors else None
+        if parts[-1] == "jobs" and isinstance(self.jobs.get((run_id, int(parts[3]))), Exception):
+            return self.jobs[(run_id, int(parts[3]))]
         if len(parts) == 2:
             return states.pop(0) if len(states) > 1 else states[0]
         if parts[-1] == "jobs":
@@ -204,6 +215,36 @@ class WatchTest(unittest.TestCase):
         self.assertEqual(get.asked, {})
         self.assertEqual(rw.problems(regs, V)[-1], "Go module proxy: go.yml run 7 had not finished in time")
 
+    def test_no_answer_from_github_is_unknown_for_that_round(self):
+        no_answer = rw.ApiError("gh api: HTTP 503: Service Unavailable")
+        gh = GitHub(states={7: [no_answer, run(7, "in_progress"), run(7, conclusion="failure"),
+                                run(7, conclusion="failure"), run(7, attempt=2)]}, post_errors=[no_answer])
+        regs = watch(only("python", run=7), gh, registry(SERVED))
+        self.assertEqual(len(gh.reruns()), 2)  # the first re-run got no answer: asked again next round
+        self.assertEqual((regs["python"]["final"], regs["python"]["missing"]), ("success", []))
+        # GitHub never answers: asked every round until the deadline, then reported.
+        clock = Clock()
+        regs = watch(only("python", run=7), GitHub(states={7: [no_answer]}), registry(SERVED), clock,
+                     deadline=T0 + datetime.timedelta(minutes=10))
+        self.assertEqual(clock.now, T0 + datetime.timedelta(minutes=10))
+        self.assertIn("PyPI: python.yml run 7 had not finished in time "
+                      "(GitHub's last answer: gh api: HTTP 503: Service Unavailable)", rw.problems(regs, V))
+
+    def test_a_gh_command_that_hangs_is_a_failed_try(self):
+        answers = [subprocess.TimeoutExpired("gh", 60), subprocess.CompletedProcess([], 1, "", "HTTP 502"),
+                   subprocess.CompletedProcess([], 0, '{"id": 7}', "")]
+
+        def fake_run(cmd, **kw):
+            self.assertEqual(kw["timeout"], rw.GH_TIMEOUT)
+            answer = answers.pop(0)
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+        self.assertEqual(rw.gh_api("repos/x", run=fake_run, sleep=lambda s: None), {"id": 7})
+        answers[:] = [subprocess.TimeoutExpired("gh", 60)] * 3
+        with self.assertRaisesRegex(rw.ApiError, "no answer in 60 seconds"):
+            rw.gh_api("repos/x", run=fake_run, sleep=lambda s: None)
+
     def test_check_only_reads_and_never_reruns_or_waits(self):
         gh = GitHub(states={7: [run(7, conclusion="failure")]})
         clock = Clock()
@@ -247,6 +288,27 @@ class TableTest(unittest.TestCase):
         table = rw.render(V, [rows[1], ("**NuGet**: x", None, rw.parse_time("2026-11-03T18:15:55Z"), "served")], T0)
         self.assertIn("| - plan | 00:59:47 | 00:59:49 | 0m 02s | 0m 09s | success |", table)
         self.assertIn("| **NuGet**: x |  | 11-03 18:15:55 |  | 10d 17h | served |", table)
+
+    def test_the_table_is_written_when_github_gives_no_details(self):
+        # Every run succeeded and every registry serves the version, but GitHub
+        # does not answer for release.yml's run or for python's jobs.
+        no_answer = rw.ApiError("gh api: HTTP 502: Bad Gateway")
+        gh = GitHub(states={**{i: [run(i)] for i in range(1, 6)}, 99: [no_answer]}, jobs={(1, 1): no_answer})
+        served = {key: (lambda get, version, key=key: (f"{key} {version}", [], T0)) for key in rw.REGISTRIES}
+        runs = {key: {"at": "2026-10-24T00:59:40Z", "run": i} for i, key in enumerate(rw.REGISTRIES, 1)}
+        with tempfile.TemporaryDirectory() as folder, mock.patch.object(rw, "gh_api", gh), \
+                mock.patch.dict(rw.CHECKS, served), contextlib.redirect_stdout(io.StringIO()):
+            summary = pathlib.Path(folder, "summary.md")
+            code = rw.main(["watch", "--version", V, "--runs", json.dumps(runs), "--release-run", "99",
+                            "--build-started-at", "2026-10-24T00:49:55Z", "--summary", str(summary), "--out", folder])
+            table = summary.read_text(encoding="utf-8")
+            self.assertEqual(table, pathlib.Path(folder, "timings.md").read_text(encoding="utf-8"))
+        self.assertEqual(code, 0)  # only a registry that is off, not served or whose run failed is a problem
+        unknown = "unknown: could not read it from GitHub (gh api: HTTP 502: Bad Gateway)"
+        self.assertIn(f"| release.yml run 99 |  |  |  |  | {unknown} |", table)
+        self.assertIn(f"| python.yml run 1 |  |  |  |  | {unknown} |", table)
+        self.assertIn("| rust.yml run 2 | 00:59:44 | 01:04:00 | 4m 16s | 14m 05s | success |", table)
+        self.assertIn("| **PyPI**: python 0.8.0-dev.3 |  | 00:59:40 |  | 9m 45s | served |", table)
 
 
 if __name__ == "__main__":

@@ -91,15 +91,23 @@ class ApiError(Exception):
     pass
 
 
-def gh_api(path, method="GET"):
-    """GitHub's REST API through gh (GH_TOKEN), tried 3 times."""
+def gh_api(path, method="GET", run=subprocess.run, sleep=time.sleep):
+    """GitHub's REST API through gh (GH_TOKEN), tried 3 times, each for up to GH_TIMEOUT seconds."""
     for attempt in range(3):
-        result = subprocess.run(["gh", "api", "-X", method, path], capture_output=True, text=True)
-        if result.returncode == 0:
-            return json.loads(result.stdout) if result.stdout.strip() else None
+        try:
+            result = run(["gh", "api", "-X", method, path], capture_output=True, text=True, timeout=GH_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            error = f"no answer in {GH_TIMEOUT} seconds"
+        else:
+            error = result.stderr.strip()
+            if result.returncode == 0:
+                try:
+                    return json.loads(result.stdout) if result.stdout.strip() else None
+                except ValueError:
+                    error = "the answer is not JSON"
         if attempt < 2:
-            time.sleep(10)
-    raise ApiError(f"gh api -X {method} {path}: {result.stderr.strip()}")
+            sleep(10)
+    raise ApiError(f"gh api -X {method} {path}: {error}")
 
 
 def get_json(get, url):
@@ -240,8 +248,9 @@ def watch(version, runs, gh, get, check_only=False, deadline=None, since=None, c
     for key, (registry, workflow, variable) in REGISTRIES.items():
         given = runs.get(key, {})
         reg = regs[key] = {"registry": registry, "workflow": workflow, "variable": variable, "off": given.get("off"),
-                           "error": given.get("error"), "run": given.get("run"), "reran": False, "final": None,
-                           "final_at": None, "what": None, "missing": None, "seen_missing": False, "served_at": None}
+                           "error": given.get("error"), "run": given.get("run"), "reran": False, "rerun_errors": 0,
+                           "final": None, "final_at": None, "unknown": None, "what": None, "missing": None,
+                           "seen_missing": False, "served_at": None}
         if not reg["run"] and not reg["off"] and given.get("at"):  # start() saw no run: look for it a while
             left = (deadline - clock()).total_seconds() if deadline else LOOK_FOR
             reg["run"] = find_run(gh, workflow, parse_time(given["at"]), run_name(version),
@@ -258,25 +267,35 @@ def watch(version, runs, gh, get, check_only=False, deadline=None, since=None, c
             return False
         return reg["final"] != "success" or (now - reg["final_at"]).total_seconds() >= PROPAGATION
 
+    def follow(reg, now):
+        run = gh(f"repos/{REPO}/actions/runs/{reg['run']}")
+        if run["status"] != "completed" or (reg["reran"] and run["run_attempt"] == 1):  # running, or re-run not shown yet
+            return
+        if run["conclusion"] == "success" or run["run_attempt"] > 1 or check_only or reg["rerun_errors"] == 3:
+            reg["final"], reg["final_at"] = run["conclusion"], now
+            log(f"{iso(now)} {reg['workflow']} run {reg['run']} ended in {run['conclusion']}")
+            return
+        log(f"{iso(now)} {reg['workflow']} run {reg['run']} ended in {run['conclusion']}: re-running its failed jobs")
+        try:
+            gh(f"repos/{REPO}/actions/runs/{reg['run']}/rerun-failed-jobs", "POST")
+            reg["reran"] = True
+        except ApiError as error:  # tried again next round, 3 times in all
+            reg["rerun_errors"] += 1
+            log(f"could not re-run it: {error}")
+
     while True:
         now = clock()
         for key, reg in regs.items():
             if settled(reg, now):
                 continue
             if not reg["final"]:
-                run = gh(f"repos/{REPO}/actions/runs/{reg['run']}")
-                if run["status"] == "completed" and not (reg["reran"] and run["run_attempt"] == 1):
-                    if run["conclusion"] != "success" and run["run_attempt"] == 1 and not check_only:
-                        log(f"{iso(now)} {reg['workflow']} run {reg['run']} ended in {run['conclusion']}: re-running its failed jobs")
-                        try:
-                            gh(f"repos/{REPO}/actions/runs/{reg['run']}/rerun-failed-jobs", "POST")
-                            reg["reran"] = True
-                        except ApiError as error:
-                            log(f"could not re-run it: {error}")
-                            reg["final"], reg["final_at"] = run["conclusion"], now
-                    else:
-                        reg["final"], reg["final_at"] = run["conclusion"], now
-                        log(f"{iso(now)} {reg['workflow']} run {reg['run']} ended in {run['conclusion']}")
+                try:
+                    follow(reg, now)
+                    reg["unknown"] = None
+                except ApiError as error:  # unknown this round: ask again next round
+                    reg["unknown"] = str(error)[-300:]
+                    log(f"{iso(now)} {reg['workflow']} run {reg['run']}: no answer from GitHub this round: {error}")
+                    continue
             # Ask a registry only once its run is over (or in a check of a past
             # release): proxy.golang.org caches a "not found" for 30 minutes.
             if reg["final"] or check_only:
@@ -301,7 +320,8 @@ def problems(regs, version):
         elif not reg["run"]:
             found.append(f"{name}: {workflow} was not started{': ' + reg['error'] if reg['error'] else ''}")
         elif not reg["final"]:
-            found.append(f"{name}: {workflow} run {reg['run']} had not finished in time")
+            unknown = f" (GitHub's last answer: {reg['unknown']})" if reg.get("unknown") else ""
+            found.append(f"{name}: {workflow} run {reg['run']} had not finished in time{unknown}")
         elif reg["final"] != "success":
             again = ", also after re-running its failed jobs" if reg["reran"] else ""
             found.append(f"{name}: {workflow} run https://github.com/{REPO}/actions/runs/{reg['run']} ended in {reg['final']}{again}")
@@ -359,18 +379,28 @@ def render(version, rows, origin):
 
 
 def timings(version, regs, gh, release_run, build_started_at):
-    """The rows of the table, and the time they count from."""
+    """The rows of the table, and the time they count from. A run GitHub
+    gives no details of gets one row that says so."""
+    def rows_of(run_id, workflow):
+        try:
+            return run_rows(gh, run_id, workflow)
+        except (ApiError, KeyError, TypeError, ValueError) as error:
+            return [(f"{workflow} run {run_id}", None, None, f"unknown: could not read it from GitHub ({error})"[:300])]
+
     rows = []
-    release = gh(f"repos/{REPO}/actions/runs/{release_run}") if release_run else None
+    try:
+        release = gh(f"repos/{REPO}/actions/runs/{release_run}") if release_run else None
+    except ApiError:
+        release = None  # its row below says so
     origin = build_started_at or (parse_time(release["created_at"]) if release else utcnow())
     if build_started_at:
         rows.append(("core release-build (potluckdb/core)", build_started_at,
                      parse_time(release["created_at"]) if release else None, ""))
     if release_run:
-        rows += run_rows(gh, release_run, "release.yml")
+        rows += rows_of(release_run, "release.yml")
     for reg in regs.values():
         if reg["run"]:
-            rows += run_rows(gh, reg["run"], reg["workflow"])
+            rows += rows_of(reg["run"], reg["workflow"])
         if reg["off"]:
             result = f"off: {reg['variable']} is not 'true'"
         elif reg["served_at"]:
