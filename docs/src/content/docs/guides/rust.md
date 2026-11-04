@@ -12,17 +12,17 @@ and Windows, x64 and ARM64.
 ```toml
 [dependencies]
 rusqlite = { version = "0.40", features = ["bundled"] }  # as before
-potluckdb = "=0.8.0-dev.2"  # optional: stops the build if the entry below is missing
+potluckdb = "={{VERSION}}"  # optional: stops the build if the entry below is missing
 
 [patch.crates-io]
-libsqlite3-sys = { git = "https://github.com/potluckdb/potluckdb", tag = "rust-v0.8.0-dev.2", version = "0.38" }
+libsqlite3-sys = { git = "https://github.com/potluckdb/potluckdb", tag = "rust-v{{VERSION}}", version = "0.38" }
 ```
 
 ```rust
 let db = rusqlite::Connection::open("app.db")?;
 let (p, s): (String, String) =
     db.query_row("SELECT potluckdb_version(), sqlite_version()", [], |r| Ok((r.get(0)?, r.get(1)?)))?;
-// p = "0.8.0-dev.2", s = "3.54.1"
+// p = "{{VERSION}}", s = "3.54.1"
 ```
 
 The first build downloads PotluckDB's library for your platform (about 2 MB)

@@ -21,7 +21,7 @@ var command = connection.CreateCommand();
 command.CommandText = "SELECT potluckdb_version(), sqlite_version()";
 using var reader = command.ExecuteReader();
 reader.Read();
-Console.WriteLine($"{reader.GetString(0)} {reader.GetString(1)}"); // 0.8.0-dev.1 3.54.1
+Console.WriteLine($"{reader.GetString(0)} {reader.GetString(1)}"); // {{VERSION}} 3.54.1
 ```
 
 ## What to change

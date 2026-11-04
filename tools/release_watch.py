@@ -8,9 +8,10 @@ every registry serves the version, and writes how long each step took.
     python tools/release_watch.py watch --version 0.8.0-dev.4 --runs '<json>'
             [--release-run ID] [--build-started-at TIME] [--summary FILE] [--out DIR]
         (release.yml) Waits for each run, re-runs its failed jobs once, then
-        waits up to 15 minutes for its registry to serve the version, and
-        writes the timings table. Fails if a registry is off, a run failed or
-        a registry does not serve every package.
+        waits for its registry to serve the version until the 1 hour goal (at
+        least 30 minutes after the run), and writes the timings table. Fails
+        if a registry is off, a run failed or a registry does not serve every
+        package.
     python tools/release_watch.py watch --version 0.8.0-dev.3 --check-only
         Read only, for a past release: finds its runs, never re-runs or
         waits, and prints the table.
@@ -18,6 +19,7 @@ every registry serves the version, and writes how long each step took.
 import argparse
 import datetime
 import gzip
+import http.client
 import json
 import os
 import pathlib
@@ -28,6 +30,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import zlib
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "python"))
 from core_archive import TARGETS, pep440  # noqa: E402
@@ -35,8 +38,8 @@ from core_archive import TARGETS, pep440  # noqa: E402
 REPO = "potluckdb/potluckdb"
 USER_AGENT = "potluckdb-release-watch (https://github.com/potluckdb/potluckdb)"
 POLL = 60  # seconds between checks (GITHUB_TOKEN may make 1,000 requests an hour)
-PROPAGATION = 15 * 60  # how long a registry may take to serve a finished run's packages
-GOAL = 60 * 60  # every registry within 1 hour of the start (core#125)
+PROPAGATION = 30 * 60  # the least time a registry gets to serve a finished run's packages (NuGet: 20 minutes)
+GOAL = 60 * 60  # every registry within 1 hour of the start (core#125); a registry gets until then
 DISPATCHES = 4  # tries to start each run: GitHub sometimes answers 5xx, sometimes after starting it
 LOOK_EVERY = 15  # seconds between looks for a run started without its id
 LOOK_FOR = 120  # seconds to look for it before concluding it was not started
@@ -81,7 +84,7 @@ def http_get(url):
                 body = gzip.decompress(body)
     except urllib.error.HTTPError as error:
         return error.code, None
-    except OSError:  # unreachable, timed out
+    except (OSError, EOFError, http.client.HTTPException, zlib.error):  # unreachable, timed out, cut off
         return None, None
     try:
         return status, json.loads(body)
@@ -251,22 +254,25 @@ def find_run(gh, workflow, since, name=None, look_for=0, clock=utcnow, sleep=tim
                     if parse_time(r["created_at"]) >= since and name in (None, r.get("display_title"))]
             if runs:
                 return min(runs, key=lambda r: (r["created_at"], r["id"]))["id"]
-        except ApiError as error:
-            log(f"could not list the {workflow} runs: {error}")
+        except (ApiError, KeyError, TypeError) as error:
+            log(f"could not list the {workflow} runs: {error!r}")
         if clock() >= until:
             return None
         sleep(LOOK_EVERY)
 
 
-def watch(version, runs, gh, get, check_only=False, deadline=None, since=None, clock=utcnow, sleep=time.sleep, log=print):
-    """Waits for the runs and the registries; returns the state of each registry."""
+def watch(version, runs, gh, get, check_only=False, deadline=None, since=None, goal=None, clock=utcnow,
+          sleep=time.sleep, log=print):
+    """Waits for the runs and the registries; returns the state of each registry.
+    A registry gets until goal (a time) to serve the version, and at least
+    PROPAGATION after its run: NuGet listed 0.8.0-dev.4 20 minutes after the push."""
     regs = {}
     for key, (registry, workflow, variable) in REGISTRIES.items():
         given = runs.get(key, {})
         reg = regs[key] = {"registry": registry, "workflow": workflow, "variable": variable, "off": given.get("off"),
                            "error": given.get("error"), "run": given.get("run"), "reran": False, "rerun_errors": 0,
                            "final": None, "final_at": None, "unknown": None, "what": None, "missing": None,
-                           "seen_missing": False, "served_at": None}
+                           "seen_missing": False, "served_at": None, "check_error": None}
         if not reg["run"] and not reg["off"] and given.get("at"):  # start() saw no run: look for it a while
             left = (deadline - clock()).total_seconds() if deadline else LOOK_FOR
             reg["run"] = find_run(gh, workflow, parse_time(given["at"]), run_name(version),
@@ -279,9 +285,11 @@ def watch(version, runs, gh, get, check_only=False, deadline=None, since=None, c
             return True
         if check_only:
             return reg["missing"] is not None
-        if not reg["final"] or reg["missing"] is None:
+        if not reg["final"] or (reg["missing"] is None and not reg["check_error"]):
             return False
-        return reg["final"] != "success" or (now - reg["final_at"]).total_seconds() >= PROPAGATION
+        if reg["final"] != "success":
+            return True
+        return (now - reg["final_at"]).total_seconds() >= PROPAGATION and (goal is None or now >= goal)
 
     def follow(reg, now):
         run = gh(f"repos/{REPO}/actions/runs/{reg['run']}")
@@ -302,20 +310,27 @@ def watch(version, runs, gh, get, check_only=False, deadline=None, since=None, c
     while True:
         now = clock()
         for key, reg in regs.items():
-            if settled(reg, now):
+            # Past the deadline, a slow GitHub or registry must not hold up the table.
+            if settled(reg, now) or (deadline and clock() > deadline):
                 continue
             if not reg["final"]:
                 try:
                     follow(reg, now)
                     reg["unknown"] = None
-                except ApiError as error:  # unknown this round: ask again next round
+                except (ApiError, KeyError, TypeError) as error:  # unknown this round: ask again next round
                     reg["unknown"] = str(error)[-300:]
-                    log(f"{iso(now)} {reg['workflow']} run {reg['run']}: no answer from GitHub this round: {error}")
+                    log(f"{iso(now)} {reg['workflow']} run {reg['run']}: no answer from GitHub this round: {error!r}")
                     continue
             # Ask a registry only once its run is over (or in a check of a past
             # release): proxy.golang.org caches a "not found" for 30 minutes.
             if reg["final"] or check_only:
-                reg["what"], reg["missing"], published = CHECKS[key](get, version)
+                try:
+                    reg["what"], reg["missing"], published = CHECKS[key](get, version)
+                    reg["check_error"] = None
+                except (AttributeError, KeyError, TypeError, ValueError) as error:  # ask again next round
+                    reg["check_error"] = repr(error)[:300]
+                    log(f"{iso(now)} {reg['registry']} gave an answer this script does not understand: {error!r}")
+                    continue
                 if reg["missing"]:
                     reg["seen_missing"] = True
                 else:
@@ -343,6 +358,9 @@ def problems(regs, version):
             found.append(f"{name}: {workflow} run https://github.com/{REPO}/actions/runs/{reg['run']} ended in {reg['final']}{again}")
         if reg["missing"]:
             found.append(f"{name} does not serve {version} of: {', '.join(reg['missing'])}")
+        elif reg["check_error"]:
+            found.append(f"{name}: could not check whether it serves {version}: "
+                         f"its last answer was not understood ({reg['check_error']})")
     return found
 
 
@@ -394,9 +412,17 @@ def render(version, rows, origin):
     return "\n".join(lines) + "\n"
 
 
-def timings(version, regs, gh, release_run, build_started_at):
-    """The rows of the table, and the time they count from. A run GitHub
-    gives no details of gets one row that says so."""
+def created_at(gh, run_id):
+    """When a run was created, or None if GitHub does not say."""
+    try:
+        return parse_time(gh(f"repos/{REPO}/actions/runs/{run_id}")["created_at"]) if run_id else None
+    except (ApiError, KeyError, TypeError, ValueError):
+        return None
+
+
+def timings(version, regs, gh, release_run, build_started_at, release_at, origin):
+    """The rows of the table, which counts from origin. A run GitHub gives no
+    details of gets one row that says so."""
     def rows_of(run_id, workflow):
         try:
             return run_rows(gh, run_id, workflow)
@@ -404,14 +430,8 @@ def timings(version, regs, gh, release_run, build_started_at):
             return [(f"{workflow} run {run_id}", None, None, f"unknown: could not read it from GitHub ({error})"[:300])]
 
     rows = []
-    try:
-        release = gh(f"repos/{REPO}/actions/runs/{release_run}") if release_run else None
-    except ApiError:
-        release = None  # its row below says so
-    origin = build_started_at or (parse_time(release["created_at"]) if release else utcnow())
     if build_started_at:
-        rows.append(("core release-build (potluckdb/core)", build_started_at,
-                     parse_time(release["created_at"]) if release else None, ""))
+        rows.append(("core release-build (potluckdb/core)", build_started_at, release_at, ""))
     if release_run:
         rows += rows_of(release_run, "release.yml")
     for reg in regs.values():
@@ -424,10 +444,12 @@ def timings(version, regs, gh, release_run, build_started_at):
             result = "served" + (" (later than the 1 hour goal)" if late else "")
         elif reg["missing"]:
             result = "missing: " + ", ".join(reg["missing"])
+        elif reg["check_error"]:
+            result = f"unknown: its last answer was not understood ({reg['check_error']})"
         else:
             result = "not checked: no finished run"
         rows.append((f"**{reg['registry']}**: {reg['what'] or version}", None, reg["served_at"], result))
-    return rows, origin
+    return rows
 
 
 def main(argv=None):
@@ -438,7 +460,7 @@ def main(argv=None):
     parser.add_argument("--release-run", type=int, help="the release.yml run (default: the one that published the release)")
     parser.add_argument("--build-started-at", default="", help="when core's release-build run started")
     parser.add_argument("--check-only", action="store_true", help="read only: no re-runs, no waiting")
-    parser.add_argument("--deadline-minutes", type=float, default=70)
+    parser.add_argument("--deadline-minutes", type=float, default=85)
     parser.add_argument("--summary", help="append the table to this file (e.g. $GITHUB_STEP_SUMMARY)")
     parser.add_argument("--out", help="write timings.md and timings.json to this folder")
     args = parser.parse_args(argv)
@@ -462,14 +484,21 @@ def main(argv=None):
             query = urllib.parse.urlencode({"event": "workflow_dispatch", "per_page": 100, "created": "<=" + iso(published)})
             release_run = next((r["id"] for r in gh_api(f"repos/{REPO}/actions/workflows/release.yml/runs?{query}")["workflow_runs"]
                                 if parse_time(r["updated_at"]) >= published), None)
-    deadline = utcnow() + datetime.timedelta(minutes=args.deadline_minutes)
-    regs = watch(version, runs, gh_api, http_get, args.check_only, deadline, since)
     try:
         build_started_at = parse_time(args.build_started_at)
     except ValueError:
         print(f"warning: --build-started-at {args.build_started_at!r} is not a time; the table starts at release.yml")
         build_started_at = None
-    rows, origin = timings(version, regs, gh_api, release_run, build_started_at)
+    deadline = utcnow() + datetime.timedelta(minutes=args.deadline_minutes)
+    # The goal and the table count from core's start, else from release.yml's.
+    release_at = created_at(gh_api, release_run)
+    origin = build_started_at or release_at or utcnow()
+    regs = watch(version, runs, gh_api, http_get, args.check_only, deadline, since,
+                 goal=origin + datetime.timedelta(seconds=GOAL))
+    # Past the deadline GitHub may be what held watch up: one short try per call.
+    late = utcnow() >= deadline
+    rows = timings(version, regs, (lambda path: gh_api(path, tries=1, timeout=15)) if late else gh_api,
+                   release_run, build_started_at, release_at, origin)
     table = render(version, rows, origin)
     found = problems(regs, version)
     table += "".join(f"\n- {line}" for line in found) + ("\n" if found else "")

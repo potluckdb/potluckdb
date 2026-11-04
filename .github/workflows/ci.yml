@@ -35,5 +35,23 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: docs/package-lock.json
+      - name: No page names a released PotluckDB version
+        # docs.yml fills in {{VERSION}} with each release's own version, so no
+        # page names an older one. start/status.md lists the versions on
+        # purpose. Other projects' versions (SQLite 3.54.1) are not tags here.
+        run: |
+          released=$(git ls-remote --tags --refs origin 'refs/tags/v*' | sed 's|.*refs/tags/v||')
+          if [ -z "$released" ]; then
+            echo "::error::Could not list this repository's release tags."
+            exit 1
+          fi
+          # Each released version and its Python form (0.8.0.dev4), with no digit next to it.
+          versions=$(printf '%s\n' "$released" | sed 'p; s/-dev\./.dev/; s/-rc\./rc/; s/-alpha\./a/; s/-beta\./b/' \
+            | sort -u | sed 's/[.+]/\\&/g' | paste -sd '|')
+          grep -rnE "(^|[^0-9])($versions)(\$|[^0-9])" src/content > "$RUNNER_TEMP/found" || [ $? = 1 ]
+          if grep -v '^src/content/docs/start/status.md:' "$RUNNER_TEMP/found"; then
+            echo "::error::A docs page names a released PotluckDB version, which goes out of date. Write {{VERSION}}: docs.yml fills in the release's version."
+            exit 1
+          fi
       - run: npm ci --no-audit --no-fund
       - run: npm run build

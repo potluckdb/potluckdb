@@ -51,7 +51,7 @@ DYLD_LIBRARY_PATH=$PWD/potluckdb-sqlite-<version>-macos-arm64/lib \
 ```
 
 It prints the PotluckDB and SQLite versions, for example
-`('0.8.0-dev.1', '3.54.1')`. A plain SQLite has no `potluckdb_version()`
+`('{{VERSION}}', '3.54.1')`. A plain SQLite has no `potluckdb_version()`
 function, so the query fails if the program still uses its usual library.
 
 ## Next

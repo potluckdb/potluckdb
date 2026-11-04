@@ -1,5 +1,7 @@
 import contextlib
 import datetime
+import gzip
+import http.client
 import io
 import json
 import os
@@ -63,10 +65,11 @@ class GitHub:
 
     def __init__(self, states=None, attempts=None, jobs=None, listed=None, post_errors=None):
         self.states, self.attempts, self.jobs, self.listed = states or {}, attempts or {}, jobs or {}, listed or {}
-        self.post_errors, self.calls = post_errors or [], []
+        self.post_errors, self.calls, self.options = post_errors or [], [], []
 
-    def __call__(self, path, method="GET"):
+    def __call__(self, path, method="GET", **options):
         self.calls.append((method, path))
+        self.options.append(options)
         answer = self.answer(path, method)
         if isinstance(answer, Exception):  # GitHub did not answer
             raise answer
@@ -263,6 +266,61 @@ class WatchTest(unittest.TestCase):
             f"{rw.REGISTRIES[k][0]}: {rw.REGISTRIES[k][1]} was not started because the repository variable "
             f"{rw.REGISTRIES[k][2]} is not 'true'" for k in ["rust", "dotnet", "node", "go"]])
 
+    def test_a_registry_gets_until_the_goal_and_at_least_30_minutes_after_its_run(self):
+        # NuGet listed 0.8.0-dev.4 20 minutes after its run: in time for the 1 hour goal.
+        goal = T0 + datetime.timedelta(minutes=40)
+        regs = watch(only("dotnet", run=7), GitHub(states={7: [run(7)]}), registry(SERVED, missing_calls=20), goal=goal)
+        self.assertEqual(regs["dotnet"]["served_at"], T0 + datetime.timedelta(seconds=20 * rw.POLL))
+        self.assertFalse([line for line in rw.problems(regs, V) if line.startswith("NuGet")])
+        # Never served: reported at the goal, or 30 minutes after the run if that is later.
+        for goal, ends in [(goal, 40), (T0 + datetime.timedelta(minutes=5), 30), (None, 30)]:
+            clock = Clock()
+            regs = watch(only("dotnet", run=7), GitHub(states={7: [run(7)]}), registry({}), clock, goal=goal)
+            self.assertEqual(clock.now, T0 + datetime.timedelta(minutes=ends))
+            self.assertIn("NuGet does not serve 0.8.0-dev.3 of: PotluckDB.SQLitePCLRaw, PotluckDB.Data.Sqlite",
+                          rw.problems(regs, V))
+
+    def test_an_answer_the_check_does_not_understand_is_asked_for_again(self):
+        url = "https://crates.io/api/v1/crates/potluckdb/0.8.0-dev.3"
+        odd, good = {"version": {}}, {"version": {"created_at": "2026-10-24T01:02:03Z"}}
+        regs = watch(only("rust", run=7), GitHub(states={7: [run(7)]}), registry({url: odd}))
+        self.assertIn("crates.io: could not check whether it serves 0.8.0-dev.3: "
+                      "its last answer was not understood (KeyError('created_at'))", rw.problems(regs, V))
+        rows = rw.timings(V, regs, GitHub(states={7: [run(7)]}), None, None, None, T0)
+        self.assertIn(("**crates.io**: 0.8.0-dev.3", None, None,
+                       "unknown: its last answer was not understood (KeyError('created_at'))"), rows)
+        answers = [odd, odd, good]
+
+        def get(url):
+            return 200, answers.pop(0)
+        regs = watch(only("rust", run=7), GitHub(states={7: [run(7)]}), get)
+        self.assertEqual(regs["rust"]["served_at"], rw.parse_time("2026-10-24T01:02:03Z"))
+        self.assertFalse([line for line in rw.problems(regs, V) if line.startswith("crates.io")])
+
+    def test_an_answer_cut_off_is_no_answer(self):
+        class Response:
+            status, headers = 200, {"Content-Encoding": "gzip"}
+
+            def __init__(self, body):
+                self.body = body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *error):
+                return False
+
+            def read(self):
+                if isinstance(self.body, Exception):
+                    raise self.body
+                return self.body
+        body = gzip.compress(b'{"versions": []}')
+        corrupt = body[:10] + b"\x07" + bytes(8)  # a deflate block of a type that does not exist
+        for answer, expected in [(body, (200, {"versions": []})), (body[:-5], (None, None)), (corrupt, (None, None)),
+                                 (http.client.IncompleteRead(b"{"), (None, None))]:
+            with mock.patch.object(rw.urllib.request, "urlopen", return_value=Response(answer)):
+                self.assertEqual(rw.http_get("https://api.nuget.org/x"), expected)
+
     def test_a_run_that_fails_again_is_not_rerun_twice(self):
         gh = GitHub(states={7: [run(7, conclusion="failure"), run(7, "in_progress", attempt=2),
                                 run(7, conclusion="failure", attempt=2)]})
@@ -294,6 +352,20 @@ class WatchTest(unittest.TestCase):
         self.assertEqual(clock.now, T0 + datetime.timedelta(minutes=10))
         self.assertIn("PyPI: python.yml run 7 had not finished in time "
                       "(GitHub's last answer: gh api: HTTP 503: Service Unavailable)", rw.problems(regs, V))
+        # An answer without the run's fields, or an empty one, is no answer either.
+        regs = watch(only("python", run=7), GitHub(states={7: [{}, None, run(7)]}), registry(SERVED))
+        self.assertEqual(regs["python"]["final"], "success")
+
+    def test_a_slow_github_does_not_hold_watch_past_the_deadline(self):
+        clock = Clock()
+
+        def slow(path, method="GET"):  # 3 tries of 60 seconds, 2 waits of 10
+            clock.sleep(200)
+            raise rw.ApiError("gh api: no answer in 60 seconds")
+        runs = {key: {"run": i} for i, key in enumerate(rw.REGISTRIES, 1)}
+        regs = watch(runs, slow, registry(SERVED), clock, deadline=T0 + datetime.timedelta(minutes=5))
+        self.assertLessEqual(clock.now, T0 + datetime.timedelta(minutes=5, seconds=200))  # 5 runs would be 1,000 a round
+        self.assertEqual(len([line for line in rw.problems(regs, V) if "had not finished in time" in line]), 5)
 
     def test_a_gh_command_that_hangs_is_a_failed_try(self):
         answers = [subprocess.TimeoutExpired("gh", 60), subprocess.CompletedProcess([], 1, "", "HTTP 502"),
@@ -362,18 +434,46 @@ class TableTest(unittest.TestCase):
         served = {key: (lambda get, version, key=key: (f"{key} {version}", [], T0)) for key in rw.REGISTRIES}
         runs = {key: {"at": "2026-10-24T00:59:40Z", "run": i} for i, key in enumerate(rw.REGISTRIES, 1)}
         with tempfile.TemporaryDirectory() as folder, mock.patch.object(rw, "gh_api", gh), \
-                mock.patch.dict(rw.CHECKS, served), contextlib.redirect_stdout(io.StringIO()):
+                mock.patch.dict(rw.CHECKS, served), mock.patch.object(rw, "watch", wraps=rw.watch) as spy, \
+                contextlib.redirect_stdout(io.StringIO()):
             summary = pathlib.Path(folder, "summary.md")
             code = rw.main(["watch", "--version", V, "--runs", json.dumps(runs), "--release-run", "99",
                             "--build-started-at", "2026-10-24T00:49:55Z", "--summary", str(summary), "--out", folder])
             table = summary.read_text(encoding="utf-8")
             self.assertEqual(table, pathlib.Path(folder, "timings.md").read_text(encoding="utf-8"))
         self.assertEqual(code, 0)  # only a registry that is off, not served or whose run failed is a problem
+        self.assertEqual(spy.call_args.kwargs["goal"], rw.parse_time("2026-10-24T01:49:55Z"))  # 1 hour after core's start
         unknown = "unknown: could not read it from GitHub (gh api: HTTP 502: Bad Gateway)"
         self.assertIn(f"| release.yml run 99 |  |  |  |  | {unknown} |", table)
         self.assertIn(f"| python.yml run 1 |  |  |  |  | {unknown} |", table)
         self.assertIn("| rust.yml run 2 | 00:59:44 | 01:04:00 | 4m 16s | 14m 05s | success |", table)
         self.assertIn("| **PyPI**: python 0.8.0-dev.3 |  | 00:59:40 |  | 9m 45s | served |", table)
+
+    def test_without_cores_start_the_goal_and_the_table_count_from_release_yml(self):
+        gh = GitHub(states={i: [run(i, started="2026-10-24T00:50:00Z" if i == 99 else "2026-10-24T00:59:44Z")]
+                            for i in [*range(1, 6), 99]})
+        served = {key: (lambda get, version, key=key: (f"{key} {version}", [], T0)) for key in rw.REGISTRIES}
+        runs = {key: {"at": "2026-10-24T00:59:40Z", "run": i} for i, key in enumerate(rw.REGISTRIES, 1)}
+        output = io.StringIO()
+        with mock.patch.object(rw, "gh_api", gh), mock.patch.dict(rw.CHECKS, served), \
+                mock.patch.object(rw, "watch", wraps=rw.watch) as spy, contextlib.redirect_stdout(output):
+            code = rw.main(["watch", "--version", V, "--runs", json.dumps(runs), "--release-run", "99"])
+        self.assertEqual(code, 0)
+        self.assertEqual(spy.call_args.kwargs["goal"], rw.parse_time("2026-10-24T01:50:00Z"))
+        self.assertIn('"Done after" counts from 00:50:00.', output.getvalue())
+        self.assertNotIn("core release-build", output.getvalue())
+
+    def test_past_the_deadline_the_table_asks_github_once_and_quickly(self):
+        gh = GitHub(states={i: [run(i)] for i in [*range(1, 6), 99]})
+        runs = {key: {"run": i} for i, key in enumerate(rw.REGISTRIES, 1)}
+        with mock.patch.object(rw, "gh_api", gh), contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()):
+            code = rw.main(["watch", "--version", V, "--runs", json.dumps(runs), "--release-run", "99",
+                            "--deadline-minutes", "-1"])
+        self.assertEqual(code, 1)  # no run was followed
+        self.assertEqual(gh.options[0], {})  # release.yml's start, before watch
+        self.assertEqual(len(gh.options), 13)  # each of the 6 runs and its jobs
+        self.assertTrue(all(options == {"tries": 1, "timeout": 15} for options in gh.options[1:]))
 
 
 @unittest.skipUnless(shutil.which("git") and shutil.which("bash") and (os.name != "nt" or os.environ.get("MSYSTEM")),

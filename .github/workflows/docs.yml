@@ -1,6 +1,7 @@
 # Publishes the docs site (docs/) of a release to https://docs.potluckdb.com
-# (PRD E5): builds docs/ from the release's tag as ci.yml does, then deploys
-# it as the production site of the Cloudflare Pages project potluckdb-docs.
+# (PRD E5): builds docs/ from the release's tag as ci.yml does, with the
+# release's version filled in, then deploys it as the production site of
+# the Cloudflare Pages project potluckdb-docs.
 # release.yml starts it for each release while the repository variable
 # DOCS_PUBLISHING is true; started by hand, it puts back an earlier release's
 # docs.
@@ -70,8 +71,22 @@ jobs:
           cache-dependency-path: docs/package-lock.json
       - run: npm ci --no-audit --no-fund
         working-directory: docs
+      - name: Fill in the version
+        # The pages write {{VERSION}} where they name a release (ci.yml
+        # rejects a released one), so each release's docs name that release.
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: grep -rlZF '{{VERSION}}' docs/src/content | xargs -0 -r sed -i "s/{{VERSION}}/$VERSION/g"
       - run: npm run build
         working-directory: docs
+      - name: Every version is filled in
+        run: |
+          status=0
+          grep -rlF '{{VERSION' docs/dist || status=$?
+          if [ "$status" != 1 ]; then  # 0: found; 2: could not read every file
+            echo "::error::These built files still hold {{VERSION}}, or grep could not read docs/dist."
+            exit 1
+          fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: docs-site

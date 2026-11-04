@@ -12,7 +12,7 @@ and musl 1.2.5+), macOS 11+ and Windows, x64 and ARM64.
 const Database = require('potluckdb');   // was: require('better-sqlite3')
 const db = new Database('app.db');
 db.prepare('select potluckdb_version() as p, sqlite_version() as s').get();
-// { p: '0.8.0-dev.1', s: '3.54.1' }
+// { p: '{{VERSION}}', s: '3.54.1' }
 ```
 
 It is built and tested on every platform, and arrives on npm in a coming
