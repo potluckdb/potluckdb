@@ -18,7 +18,7 @@
     <Version>$(PotluckDBVersion)</Version>
     <Authors>PotluckDB</Authors>
     <Description>PotluckDB's build of SQLite for SQLitePCLRaw, the native layer under Microsoft.Data.Sqlite, EF Core and sqlite-net. It takes the place of SQLitePCLRaw.bundle_e_sqlite3, for Linux, macOS and Windows.</Description>
-    <PackageTags>potluckdb;sqlite;sqlite3;sqlitepclraw;local-first;sync</PackageTags>
+    <PackageTags>potluckdb;sqlite;sqlite3;sqlitepclraw;local-first</PackageTags>
     <PackageProjectUrl>https://github.com/potluckdb/potluckdb/tree/main/dotnet</PackageProjectUrl>
     <RepositoryUrl>https://github.com/potluckdb/potluckdb</RepositoryUrl>
     <RepositoryType>git</RepositoryType>

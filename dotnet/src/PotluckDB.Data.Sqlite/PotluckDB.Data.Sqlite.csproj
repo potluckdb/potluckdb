@@ -16,7 +16,7 @@
     <Version>$(PotluckDBVersion)</Version>
     <Authors>PotluckDB</Authors>
     <Description>Microsoft.Data.Sqlite on PotluckDB's build of SQLite: use it in place of Microsoft.Data.Sqlite, and your code (and Dapper on top) keeps working. For Linux, macOS and Windows.</Description>
-    <PackageTags>potluckdb;sqlite;sqlite3;microsoft.data.sqlite;ado.net;dapper;local-first;sync</PackageTags>
+    <PackageTags>potluckdb;sqlite;sqlite3;microsoft.data.sqlite;ado.net;dapper;local-first</PackageTags>
     <PackageProjectUrl>https://github.com/potluckdb/potluckdb/tree/main/dotnet</PackageProjectUrl>
     <RepositoryUrl>https://github.com/potluckdb/potluckdb</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
