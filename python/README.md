@@ -40,6 +40,11 @@ Two extra names:
   library is built that way), even without `uri=True`.
 - The classes are PotluckDB's own: `isinstance(x, sqlite3.Connection)` with the
   standard library's module is `False` for a PotluckDB connection.
+- `PRAGMA secure_delete` is off, as in sqlite.org's SQLite and in Python's own
+  `sqlite3` on macOS and Windows. On Ubuntu, the system Python's `sqlite3` has
+  it on: there, deleted content is overwritten with zeros, while with
+  PotluckDB it stays readable in the database file until its space is reused.
+  Run `PRAGMA secure_delete = ON` on each connection to get that back.
 
 ## Platforms
 
