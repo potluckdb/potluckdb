@@ -102,21 +102,28 @@ jobs:
   # published. Packages whose publishing is off are checked too. finalize
   # starts the publishing runs on their own, as each registry trusts only its
   # own workflow file.
+  # The permissions are those each workflow's publish job asks for, which
+  # GitHub requires even though that job is skipped here; every job that runs
+  # has the workflow's own permissions (contents: read).
   check-python:
     needs: verify
     uses: ./.github/workflows/python.yml
+    permissions: { contents: read, id-token: write }
     with: { version: "${{ inputs.version }}", publish: false, archives: run }
   check-rust:
     needs: verify
     uses: ./.github/workflows/rust.yml
+    permissions: { contents: write, id-token: write }
     with: { version: "${{ inputs.version }}", publish: false, archives: run }
   check-dotnet:
     needs: verify
     uses: ./.github/workflows/dotnet.yml
+    permissions: { contents: read, id-token: write }
     with: { version: "${{ inputs.version }}", publish: false, archives: run }
   check-node:
     needs: verify
     uses: ./.github/workflows/node.yml
+    permissions: { contents: read, id-token: write }
     with: { version: "${{ inputs.version }}", publish: false, archives: run }
   check-go:
     needs: verify
