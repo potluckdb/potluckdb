@@ -18,7 +18,7 @@ on:
         type: boolean
         default: false
       build_started_at:
-        description: "When core's release-build run started (UTC, ISO 8601), for the timings table"
+        description: "When core's release-build run started (UTC, ISO 8601): the timings table and the 1 hour goal count from it"
         required: false
 
 permissions:
@@ -237,14 +237,14 @@ jobs:
     # that every registry serves the version, and writes the time of each
     # step to the job summary and the artifact release-timings. A registry
     # gets until the 1 hour goal, which counts from core's start, so it comes
-    # at most 60 minutes into this job. After a late run it gets at least 15
-    # minutes: the slowest run seen (go.yml, 25 minutes with a stalled mirror)
-    # twice and 15 minutes make 65. The script stops at 70 minutes to write
-    # the table, 10 before the timeout.
+    # at most 60 minutes into this job. After a late run it gets at least 30
+    # minutes (NuGet took 20): the slowest run seen (go.yml, 25 minutes with a
+    # stalled mirror) twice and 30 minutes make 80. The script stops at 85
+    # minutes to write the table, 10 before the timeout.
     needs: finalize
     if: ${{ !cancelled() && needs.finalize.outputs.runs }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 80
+    timeout-minutes: 95
     permissions:
       contents: read
       actions: write # re-run a publishing run's failed jobs
@@ -257,7 +257,7 @@ jobs:
           BUILD_STARTED_AT: ${{ inputs.build_started_at }}
         run: |
           python3 tools/release_watch.py watch --version "$VERSION" --runs "$RUNS" --release-run "$GITHUB_RUN_ID" \
-            --build-started-at "$BUILD_STARTED_AT" --deadline-minutes 70 --summary "$GITHUB_STEP_SUMMARY" --out timings
+            --build-started-at "$BUILD_STARTED_AT" --deadline-minutes 85 --summary "$GITHUB_STEP_SUMMARY" --out timings
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
         with:

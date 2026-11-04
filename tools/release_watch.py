@@ -9,7 +9,7 @@ every registry serves the version, and writes how long each step took.
             [--release-run ID] [--build-started-at TIME] [--summary FILE] [--out DIR]
         (release.yml) Waits for each run, re-runs its failed jobs once, then
         waits for its registry to serve the version until the 1 hour goal (at
-        least 15 minutes after the run), and writes the timings table. Fails
+        least 30 minutes after the run), and writes the timings table. Fails
         if a registry is off, a run failed or a registry does not serve every
         package.
     python tools/release_watch.py watch --version 0.8.0-dev.3 --check-only
@@ -19,6 +19,7 @@ every registry serves the version, and writes how long each step took.
 import argparse
 import datetime
 import gzip
+import http.client
 import json
 import os
 import pathlib
@@ -29,6 +30,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import zlib
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "python"))
 from core_archive import TARGETS, pep440  # noqa: E402
@@ -36,7 +38,7 @@ from core_archive import TARGETS, pep440  # noqa: E402
 REPO = "potluckdb/potluckdb"
 USER_AGENT = "potluckdb-release-watch (https://github.com/potluckdb/potluckdb)"
 POLL = 60  # seconds between checks (GITHUB_TOKEN may make 1,000 requests an hour)
-PROPAGATION = 15 * 60  # the least time a registry gets to serve a finished run's packages
+PROPAGATION = 30 * 60  # the least time a registry gets to serve a finished run's packages (NuGet: 20 minutes)
 GOAL = 60 * 60  # every registry within 1 hour of the start (core#125); a registry gets until then
 DISPATCHES = 4  # tries to start each run: GitHub sometimes answers 5xx, sometimes after starting it
 LOOK_EVERY = 15  # seconds between looks for a run started without its id
@@ -82,7 +84,7 @@ def http_get(url):
                 body = gzip.decompress(body)
     except urllib.error.HTTPError as error:
         return error.code, None
-    except OSError:  # unreachable, timed out
+    except (OSError, EOFError, http.client.HTTPException, zlib.error):  # unreachable, timed out, cut off
         return None, None
     try:
         return status, json.loads(body)
@@ -270,7 +272,7 @@ def watch(version, runs, gh, get, check_only=False, deadline=None, since=None, g
         reg = regs[key] = {"registry": registry, "workflow": workflow, "variable": variable, "off": given.get("off"),
                            "error": given.get("error"), "run": given.get("run"), "reran": False, "rerun_errors": 0,
                            "final": None, "final_at": None, "unknown": None, "what": None, "missing": None,
-                           "seen_missing": False, "served_at": None}
+                           "seen_missing": False, "served_at": None, "check_error": None}
         if not reg["run"] and not reg["off"] and given.get("at"):  # start() saw no run: look for it a while
             left = (deadline - clock()).total_seconds() if deadline else LOOK_FOR
             reg["run"] = find_run(gh, workflow, parse_time(given["at"]), run_name(version),
@@ -283,7 +285,7 @@ def watch(version, runs, gh, get, check_only=False, deadline=None, since=None, g
             return True
         if check_only:
             return reg["missing"] is not None
-        if not reg["final"] or reg["missing"] is None:
+        if not reg["final"] or (reg["missing"] is None and not reg["check_error"]):
             return False
         if reg["final"] != "success":
             return True
@@ -321,7 +323,13 @@ def watch(version, runs, gh, get, check_only=False, deadline=None, since=None, g
             # Ask a registry only once its run is over (or in a check of a past
             # release): proxy.golang.org caches a "not found" for 30 minutes.
             if reg["final"] or check_only:
-                reg["what"], reg["missing"], published = CHECKS[key](get, version)
+                try:
+                    reg["what"], reg["missing"], published = CHECKS[key](get, version)
+                    reg["check_error"] = None
+                except (AttributeError, KeyError, TypeError, ValueError) as error:  # ask again next round
+                    reg["check_error"] = repr(error)[:300]
+                    log(f"{iso(now)} {reg['registry']} gave an answer this script does not understand: {error!r}")
+                    continue
                 if reg["missing"]:
                     reg["seen_missing"] = True
                 else:
@@ -349,6 +357,9 @@ def problems(regs, version):
             found.append(f"{name}: {workflow} run https://github.com/{REPO}/actions/runs/{reg['run']} ended in {reg['final']}{again}")
         if reg["missing"]:
             found.append(f"{name} does not serve {version} of: {', '.join(reg['missing'])}")
+        elif reg["check_error"]:
+            found.append(f"{name}: could not check whether it serves {version}: "
+                         f"its last answer was not understood ({reg['check_error']})")
     return found
 
 
@@ -400,9 +411,17 @@ def render(version, rows, origin):
     return "\n".join(lines) + "\n"
 
 
-def timings(version, regs, gh, release_run, build_started_at):
-    """The rows of the table, and the time they count from. A run GitHub
-    gives no details of gets one row that says so."""
+def created_at(gh, run_id):
+    """When a run was created, or None if GitHub does not say."""
+    try:
+        return parse_time(gh(f"repos/{REPO}/actions/runs/{run_id}")["created_at"]) if run_id else None
+    except (ApiError, KeyError, TypeError, ValueError):
+        return None
+
+
+def timings(version, regs, gh, release_run, build_started_at, release_at, origin):
+    """The rows of the table, which counts from origin. A run GitHub gives no
+    details of gets one row that says so."""
     def rows_of(run_id, workflow):
         try:
             return run_rows(gh, run_id, workflow)
@@ -410,14 +429,8 @@ def timings(version, regs, gh, release_run, build_started_at):
             return [(f"{workflow} run {run_id}", None, None, f"unknown: could not read it from GitHub ({error})"[:300])]
 
     rows = []
-    try:
-        release = gh(f"repos/{REPO}/actions/runs/{release_run}") if release_run else None
-    except ApiError:
-        release = None  # its row below says so
-    origin = build_started_at or (parse_time(release["created_at"]) if release else utcnow())
     if build_started_at:
-        rows.append(("core release-build (potluckdb/core)", build_started_at,
-                     parse_time(release["created_at"]) if release else None, ""))
+        rows.append(("core release-build (potluckdb/core)", build_started_at, release_at, ""))
     if release_run:
         rows += rows_of(release_run, "release.yml")
     for reg in regs.values():
@@ -430,10 +443,12 @@ def timings(version, regs, gh, release_run, build_started_at):
             result = "served" + (" (later than the 1 hour goal)" if late else "")
         elif reg["missing"]:
             result = "missing: " + ", ".join(reg["missing"])
+        elif reg["check_error"]:
+            result = f"unknown: its last answer was not understood ({reg['check_error']})"
         else:
             result = "not checked: no finished run"
         rows.append((f"**{reg['registry']}**: {reg['what'] or version}", None, reg["served_at"], result))
-    return rows, origin
+    return rows
 
 
 def main(argv=None):
@@ -444,7 +459,7 @@ def main(argv=None):
     parser.add_argument("--release-run", type=int, help="the release.yml run (default: the one that published the release)")
     parser.add_argument("--build-started-at", default="", help="when core's release-build run started")
     parser.add_argument("--check-only", action="store_true", help="read only: no re-runs, no waiting")
-    parser.add_argument("--deadline-minutes", type=float, default=70)
+    parser.add_argument("--deadline-minutes", type=float, default=85)
     parser.add_argument("--summary", help="append the table to this file (e.g. $GITHUB_STEP_SUMMARY)")
     parser.add_argument("--out", help="write timings.md and timings.json to this folder")
     args = parser.parse_args(argv)
@@ -474,9 +489,12 @@ def main(argv=None):
         print(f"warning: --build-started-at {args.build_started_at!r} is not a time; the table starts at release.yml")
         build_started_at = None
     deadline = utcnow() + datetime.timedelta(minutes=args.deadline_minutes)
-    goal = (build_started_at or utcnow()) + datetime.timedelta(seconds=GOAL)  # without core's start, from now
-    regs = watch(version, runs, gh_api, http_get, args.check_only, deadline, since, goal=goal)
-    rows, origin = timings(version, regs, gh_api, release_run, build_started_at)
+    # The goal and the table count from core's start, else from release.yml's.
+    release_at = created_at(gh_api, release_run)
+    origin = build_started_at or release_at or utcnow()
+    regs = watch(version, runs, gh_api, http_get, args.check_only, deadline, since,
+                 goal=origin + datetime.timedelta(seconds=GOAL))
+    rows = timings(version, regs, gh_api, release_run, build_started_at, release_at, origin)
     table = render(version, rows, origin)
     found = problems(regs, version)
     table += "".join(f"\n- {line}" for line in found) + ("\n" if found else "")

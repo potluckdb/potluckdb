@@ -1,5 +1,7 @@
 import contextlib
 import datetime
+import gzip
+import http.client
 import io
 import json
 import os
@@ -263,19 +265,56 @@ class WatchTest(unittest.TestCase):
             f"{rw.REGISTRIES[k][0]}: {rw.REGISTRIES[k][1]} was not started because the repository variable "
             f"{rw.REGISTRIES[k][2]} is not 'true'" for k in ["rust", "dotnet", "node", "go"]])
 
-    def test_a_registry_gets_until_the_goal_and_at_least_15_minutes_after_its_run(self):
+    def test_a_registry_gets_until_the_goal_and_at_least_30_minutes_after_its_run(self):
         # NuGet listed 0.8.0-dev.4 20 minutes after its run: in time for the 1 hour goal.
         goal = T0 + datetime.timedelta(minutes=40)
         regs = watch(only("dotnet", run=7), GitHub(states={7: [run(7)]}), registry(SERVED, missing_calls=20), goal=goal)
         self.assertEqual(regs["dotnet"]["served_at"], T0 + datetime.timedelta(seconds=20 * rw.POLL))
         self.assertFalse([line for line in rw.problems(regs, V) if line.startswith("NuGet")])
-        # Never served: reported at the goal, or 15 minutes after the run if that is later.
-        for goal, ends in [(goal, 40), (T0 + datetime.timedelta(minutes=5), 15), (None, 15)]:
+        # Never served: reported at the goal, or 30 minutes after the run if that is later.
+        for goal, ends in [(goal, 40), (T0 + datetime.timedelta(minutes=5), 30), (None, 30)]:
             clock = Clock()
             regs = watch(only("dotnet", run=7), GitHub(states={7: [run(7)]}), registry({}), clock, goal=goal)
             self.assertEqual(clock.now, T0 + datetime.timedelta(minutes=ends))
             self.assertIn("NuGet does not serve 0.8.0-dev.3 of: PotluckDB.SQLitePCLRaw, PotluckDB.Data.Sqlite",
                           rw.problems(regs, V))
+
+    def test_an_answer_the_check_does_not_understand_is_asked_for_again(self):
+        url = "https://crates.io/api/v1/crates/potluckdb/0.8.0-dev.3"
+        odd, good = {"version": {}}, {"version": {"created_at": "2026-10-24T01:02:03Z"}}
+        regs = watch(only("rust", run=7), GitHub(states={7: [run(7)]}), registry({url: odd}))
+        self.assertIn("crates.io: could not check whether it serves 0.8.0-dev.3: "
+                      "its last answer was not understood (KeyError('created_at'))", rw.problems(regs, V))
+        answers = [odd, odd, good]
+
+        def get(url):
+            return 200, answers.pop(0)
+        regs = watch(only("rust", run=7), GitHub(states={7: [run(7)]}), get)
+        self.assertEqual(regs["rust"]["served_at"], rw.parse_time("2026-10-24T01:02:03Z"))
+        self.assertFalse([line for line in rw.problems(regs, V) if line.startswith("crates.io")])
+
+    def test_an_answer_cut_off_is_no_answer(self):
+        class Response:
+            status, headers = 200, {"Content-Encoding": "gzip"}
+
+            def __init__(self, body):
+                self.body = body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *error):
+                return False
+
+            def read(self):
+                if isinstance(self.body, Exception):
+                    raise self.body
+                return self.body
+        body = gzip.compress(b'{"versions": []}')
+        for answer, expected in [(body, (200, {"versions": []})), (body[:-5], (None, None)),
+                                 (http.client.IncompleteRead(b"{"), (None, None))]:
+            with mock.patch.object(rw.urllib.request, "urlopen", return_value=Response(answer)):
+                self.assertEqual(rw.http_get("https://api.nuget.org/x"), expected)
 
     def test_a_run_that_fails_again_is_not_rerun_twice(self):
         gh = GitHub(states={7: [run(7, conclusion="failure"), run(7, "in_progress", attempt=2),
@@ -376,7 +415,8 @@ class TableTest(unittest.TestCase):
         served = {key: (lambda get, version, key=key: (f"{key} {version}", [], T0)) for key in rw.REGISTRIES}
         runs = {key: {"at": "2026-10-24T00:59:40Z", "run": i} for i, key in enumerate(rw.REGISTRIES, 1)}
         with tempfile.TemporaryDirectory() as folder, mock.patch.object(rw, "gh_api", gh), \
-                mock.patch.dict(rw.CHECKS, served), mock.patch.object(rw, "watch", wraps=rw.watch) as spy,                 contextlib.redirect_stdout(io.StringIO()):
+                mock.patch.dict(rw.CHECKS, served), mock.patch.object(rw, "watch", wraps=rw.watch) as spy, \
+                contextlib.redirect_stdout(io.StringIO()):
             summary = pathlib.Path(folder, "summary.md")
             code = rw.main(["watch", "--version", V, "--runs", json.dumps(runs), "--release-run", "99",
                             "--build-started-at", "2026-10-24T00:49:55Z", "--summary", str(summary), "--out", folder])
@@ -389,6 +429,20 @@ class TableTest(unittest.TestCase):
         self.assertIn(f"| python.yml run 1 |  |  |  |  | {unknown} |", table)
         self.assertIn("| rust.yml run 2 | 00:59:44 | 01:04:00 | 4m 16s | 14m 05s | success |", table)
         self.assertIn("| **PyPI**: python 0.8.0-dev.3 |  | 00:59:40 |  | 9m 45s | served |", table)
+
+    def test_without_cores_start_the_goal_and_the_table_count_from_release_yml(self):
+        gh = GitHub(states={i: [run(i, started="2026-10-24T00:50:00Z" if i == 99 else "2026-10-24T00:59:44Z")]
+                            for i in [*range(1, 6), 99]})
+        served = {key: (lambda get, version, key=key: (f"{key} {version}", [], T0)) for key in rw.REGISTRIES}
+        runs = {key: {"at": "2026-10-24T00:59:40Z", "run": i} for i, key in enumerate(rw.REGISTRIES, 1)}
+        output = io.StringIO()
+        with mock.patch.object(rw, "gh_api", gh), mock.patch.dict(rw.CHECKS, served), \
+                mock.patch.object(rw, "watch", wraps=rw.watch) as spy, contextlib.redirect_stdout(output):
+            code = rw.main(["watch", "--version", V, "--runs", json.dumps(runs), "--release-run", "99"])
+        self.assertEqual(code, 0)
+        self.assertEqual(spy.call_args.kwargs["goal"], rw.parse_time("2026-10-24T01:50:00Z"))
+        self.assertIn('"Done after" counts from 00:50:00.', output.getvalue())
+        self.assertNotIn("core release-build", output.getvalue())
 
 
 @unittest.skipUnless(shutil.which("git") and shutil.which("bash") and (os.name != "nt" or os.environ.get("MSYSTEM")),
