@@ -1,7 +1,9 @@
 # Publishes a release that core's release-build workflow prepared as a draft
 # (PRD E5): checks the exact files and their signatures, tests them on every
-# platform, then writes the release notes and publishes the GitHub release.
-# Nothing is rebuilt. Started by core's release-build workflow.
+# platform, builds and tests every package from them, then writes the release
+# notes, publishes the GitHub release and starts each package's publishing.
+# Nothing is published unless every check passed. Nothing is rebuilt.
+# Started by core's release-build workflow.
 name: release
 
 on:
@@ -10,6 +12,10 @@ on:
       version:
         description: "Version of the draft release, e.g. 0.8.0-dev.1"
         required: true
+      dry_run:
+        description: "Run every check, publish nothing (stop before finalize)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -91,8 +97,35 @@ jobs:
                 [ "$i" = 3 ] && exit 1; echo "dnf stalled or failed; trying again"; done; fi
             python3 tests/release/smoke.py dist/potluckdb-sqlite-"$VERSION"-${{ matrix.target }}.tar.gz "$VERSION"'
 
+  # Every package's build and tests on all 8 platforms (publish: false), from
+  # the draft's files that verify checked (archives: run), before anything is
+  # published. Packages whose publishing is off are checked too. finalize
+  # starts the publishing runs on their own, as each registry trusts only its
+  # own workflow file.
+  check-python:
+    needs: verify
+    uses: ./.github/workflows/python.yml
+    with: { version: "${{ inputs.version }}", publish: false, archives: run }
+  check-rust:
+    needs: verify
+    uses: ./.github/workflows/rust.yml
+    with: { version: "${{ inputs.version }}", publish: false, archives: run }
+  check-dotnet:
+    needs: verify
+    uses: ./.github/workflows/dotnet.yml
+    with: { version: "${{ inputs.version }}", publish: false, archives: run }
+  check-node:
+    needs: verify
+    uses: ./.github/workflows/node.yml
+    with: { version: "${{ inputs.version }}", publish: false, archives: run }
+  check-go:
+    needs: verify
+    uses: ./.github/workflows/go.yml
+    with: { version: "${{ inputs.version }}", publish: false, archives: run }
+
   finalize:
-    needs: test
+    needs: [test, check-python, check-rust, check-dotnet, check-node, check-go]
+    if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

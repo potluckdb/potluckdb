@@ -11,6 +11,8 @@
 #
 # Everything is built against a release's core archives, so nothing is built
 # before the first release exists; the run then passes with a notice.
+# Called with archives: run (release.yml, before it publishes), the archives
+# are those of the calling run's artifact dist: the draft release's.
 name: rust
 
 on:
@@ -40,12 +42,16 @@ on:
         description: "Tag rust-v<version> and publish the potluckdb crate for this version"
         type: boolean
         default: false
+      archives:
+        description: "release: the core archives of the GitHub release; run: those in the calling run's artifact dist"
+        type: string
+        default: release
 
 permissions:
   contents: read
 
 concurrency:
-  group: rust-${{ github.ref }}-${{ inputs.version }}-${{ inputs.publish }}
+  group: rust-${{ github.ref }}-${{ inputs.version }}-${{ inputs.publish }}-${{ inputs.archives }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -66,12 +72,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
           PUBLISH: ${{ inputs.publish }}
+          ARCHIVES: ${{ inputs.archives }}
         run: |
           if [ -z "$VERSION" ]; then
             VERSION=$(gh release list -R "$GITHUB_REPOSITORY" --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName // ""')
             VERSION=${VERSION#v}
           fi
-          if [ "$PUBLISH" = true ] && [ -n "$VERSION" ] &&
+          if [ "$ARCHIVES" = run ]; then
+            # From release.yml, before the release is out: its checked draft's archives.
+            [ "$PUBLISH" != true ] || { echo "::error::Publishing builds from the published release, not with archives: run."; exit 1; }
+            echo "Testing the draft of PotluckDB $VERSION (the calling run's archives)"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          elif [ "$PUBLISH" = true ] && [ -n "$VERSION" ] &&
               ! gh api "repos/$GITHUB_REPOSITORY/contents/rust/Cargo.toml?ref=v$VERSION" --silent 2> /dev/null; then
             # Publishing tags the release's own commit, so it needs rust/ in it.
             echo "::error::Release v$VERSION predates the Rust packages (its commit has no rust/ folder); the potluckdb crate publishes from the next release on."
@@ -152,12 +164,19 @@ jobs:
           # Publishing tests the release's own commit, which publish tags.
           ref: ${{ inputs.publish && format('v{0}', needs.plan.outputs.version) || '' }}
       - name: Download the PotluckDB library for ${{ matrix.target }}
+        if: inputs.archives != 'run'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release download "v$VERSION" -R "$GITHUB_REPOSITORY" -D core \
             -p "potluckdb-sqlite-$VERSION-${{ matrix.target }}.*" -p SHA256SUMS
           ls -l core
+      - name: Take the PotluckDB libraries from the calling run
+        if: inputs.archives == 'run'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: core
       - name: Install Rust ${{ env.RUST_TOOLCHAIN }}
         if: matrix.container != 'alpine'
         run: |
