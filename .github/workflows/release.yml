@@ -130,6 +130,7 @@ jobs:
         # Each registry trusts its own workflow file, so each one runs on its
         # own, from the published release's exact archives. A registry whose
         # <X>_PUBLISHING variable is not "true" is not started, and watch fails.
+        # It takes at most 4 minutes; watch looks for any run it did not see.
         id: start
         env:
           GH_TOKEN: ${{ github.token }}

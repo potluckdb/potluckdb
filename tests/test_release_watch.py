@@ -183,6 +183,69 @@ class StartTest(unittest.TestCase):
         self.assertEqual(runs["rust"], {"at": "2026-10-24T00:59:40Z", "run": None, "error": "HTTP 502: Bad Gateway"})
         self.assertEqual(took, datetime.timedelta(seconds=3 * 2 * rw.LOOK_EVERY))  # 4 tries in about 2 minutes
 
+    def test_start_ends_within_its_budget_when_every_gh_command_hangs(self):
+        clock, real_start = Clock(), rw.start
+
+        def hang_run(cmd, **kw):
+            clock.sleep(kw["timeout"])
+            raise subprocess.TimeoutExpired(cmd, kw["timeout"])
+
+        def hang_gh(path):
+            clock.sleep(rw.START_CALL)
+            raise rw.ApiError(f"gh api -X GET {path}: no answer in {rw.START_CALL} seconds")
+
+        def hanging_start(version, env, runs):
+            return real_start(version, env, run=hang_run, gh=hang_gh, clock=clock, sleep=clock.sleep, runs=runs)
+        with tempfile.TemporaryDirectory() as folder:
+            output = pathlib.Path(folder, "output")
+            env = {variable: "true" for _, _, variable in rw.REGISTRIES.values()}
+            with mock.patch.object(rw, "start", hanging_start), mock.patch.dict(os.environ, {**env, "GITHUB_OUTPUT": str(output)}), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(rw.main(["start", "--version", V]), 0)
+            written = output.read_text(encoding="utf-8")
+        # Every first start (5 x 30 s), one wait and the 2 lookups that still fit.
+        self.assertEqual(clock.now - T0, datetime.timedelta(seconds=225))
+        self.assertLessEqual(clock.now - T0, datetime.timedelta(seconds=rw.START_BUDGET))
+        runs = json.loads(written.removeprefix("runs="))
+        self.assertEqual(runs["python"], {"at": "2026-10-24T00:59:40Z", "run": None,
+                                          "error": "gh workflow run gave no answer in 30 seconds"})
+        self.assertEqual(runs["go"], {"at": "2026-10-24T01:01:40Z", "run": None,
+                                      "error": "gh workflow run gave no answer in 30 seconds"})
+
+    def test_the_output_is_written_even_if_start_fails(self):
+        def failing_start(version, env, runs):
+            runs["python"] = {"at": "2026-10-24T00:59:40Z", "run": 4}
+            raise RuntimeError("start failed half way")
+        with tempfile.TemporaryDirectory() as folder:
+            output = pathlib.Path(folder, "output")
+            with mock.patch.object(rw, "start", failing_start), mock.patch.dict(os.environ, {"GITHUB_OUTPUT": str(output)}):
+                with self.assertRaises(RuntimeError):
+                    rw.main(["start", "--version", V])
+            self.assertEqual(output.read_text(encoding="utf-8"), 'runs={"python": {"at": "2026-10-24T00:59:40Z", "run": 4}}\n')
+
+    def test_a_run_started_despite_a_hung_start_is_found_by_watch(self):
+        # Each start hangs, but GitHub started python's run; it is listed only
+        # after start() has given up.
+        clock = Clock()
+        shows_up = T0 + datetime.timedelta(seconds=rw.START_BUDGET + 30)
+
+        def hang_run(cmd, **kw):
+            clock.sleep(kw["timeout"])
+            raise subprocess.TimeoutExpired(cmd, kw["timeout"])
+
+        def gh(path, method="GET"):
+            if path.endswith("/runs/4"):
+                return run(4)
+            return {"workflow_runs": [listed(4, "2026-10-24T00:59:41Z")] if clock.now >= shows_up else []}
+        with contextlib.redirect_stdout(io.StringIO()):
+            runs = rw.start(V, {"PYPI_PUBLISHING": "true"}, run=hang_run, gh=gh, clock=clock, sleep=clock.sleep)
+        self.assertEqual(runs["python"]["run"], None)
+        self.assertLessEqual(clock.now - T0, datetime.timedelta(seconds=rw.START_BUDGET))
+        regs = rw.watch(V, json.loads(json.dumps(runs)), gh, registry(SERVED), clock=clock, sleep=clock.sleep,
+                        log=lambda *a: None)
+        self.assertEqual((regs["python"]["run"], regs["python"]["final"], regs["python"]["missing"]), (4, "success", []))
+        self.assertFalse([line for line in rw.problems(regs, V) if line.startswith("PyPI")])
+
 
 class WatchTest(unittest.TestCase):
     def test_a_failed_run_is_rerun_once_and_its_registry_waited_for(self):

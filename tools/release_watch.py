@@ -42,6 +42,8 @@ LOOK_EVERY = 15  # seconds between looks for a run started without its id
 LOOK_FOR = 120  # seconds to look for it before concluding it was not started
 SKEW = datetime.timedelta(seconds=5)  # between this runner's clock and GitHub's
 GH_TIMEOUT = 60  # seconds for one gh command
+START_BUDGET = 4 * 60  # seconds for all of start(), well within finalize's 10 minutes
+START_CALL = 30  # seconds for one gh command in start(), tried once: the 5 first starts fit the budget
 REGISTRIES = {  # key: (registry, workflow, the repository variable that turns it on)
     "python": ("PyPI", "python.yml", "PYPI_PUBLISHING"),
     "rust": ("crates.io", "rust.yml", "CRATES_IO_PUBLISHING"),
@@ -91,13 +93,13 @@ class ApiError(Exception):
     pass
 
 
-def gh_api(path, method="GET", run=subprocess.run, sleep=time.sleep):
-    """GitHub's REST API through gh (GH_TOKEN), tried 3 times, each for up to GH_TIMEOUT seconds."""
-    for attempt in range(3):
+def gh_api(path, method="GET", run=subprocess.run, sleep=time.sleep, tries=3, timeout=GH_TIMEOUT):
+    """GitHub's REST API through gh (GH_TOKEN), tried 3 times (tries), each for up to GH_TIMEOUT seconds (timeout)."""
+    for attempt in range(tries):
         try:
-            result = run(["gh", "api", "-X", method, path], capture_output=True, text=True, timeout=GH_TIMEOUT)
+            result = run(["gh", "api", "-X", method, path], capture_output=True, text=True, timeout=timeout)
         except subprocess.TimeoutExpired:
-            error = f"no answer in {GH_TIMEOUT} seconds"
+            error = f"no answer in {timeout} seconds"
         else:
             error = result.stderr.strip()
             if result.returncode == 0:
@@ -105,7 +107,7 @@ def gh_api(path, method="GET", run=subprocess.run, sleep=time.sleep):
                     return json.loads(result.stdout) if result.stdout.strip() else None
                 except ValueError:
                     error = "the answer is not JSON"
-        if attempt < 2:
+        if attempt < tries - 1:
             sleep(10)
     raise ApiError(f"gh api -X {method} {path}: {error}")
 
@@ -177,21 +179,28 @@ def dispatch(run, workflow, version):
     """Asks GitHub once to start a publishing run: (its id or None, the error or None)."""
     command = ["gh", "workflow", "run", workflow, "-R", REPO, "-f", f"version={version}", "-f", "publish=true"]
     try:
-        result = run(command, capture_output=True, text=True, timeout=GH_TIMEOUT)
+        result = run(command, capture_output=True, text=True, timeout=START_CALL)
     except subprocess.TimeoutExpired:
-        return None, f"gh workflow run gave no answer in {GH_TIMEOUT} seconds"
+        return None, f"gh workflow run gave no answer in {START_CALL} seconds"
     found = re.search(r"/actions/runs/(\d+)", result.stdout + result.stderr)  # gh 2.87 and later print it
     if found:
         return int(found[1]), None
     return None, (result.stderr or result.stdout).strip()[-300:] or "gh workflow run printed no run"
 
 
-def start(version, env, run=subprocess.run, gh=None, clock=utcnow, sleep=time.sleep):
-    """Starts each registry's publishing run that is on; returns what was started.
-    A start that fails is tried again, up to DISPATCHES times in about 2
-    minutes, but only once looking for the run found none."""
-    gh = gh or gh_api
-    runs, waiting = {}, []
+def start(version, env, run=subprocess.run, gh=None, clock=utcnow, sleep=time.sleep, runs=None):
+    """Starts each registry's publishing run that is on, filling in and
+    returning runs. A start that fails is tried again, up to DISPATCHES
+    times, but only once looking for the run found none. All of it takes at
+    most START_BUDGET seconds, even if every gh command hangs: a registry
+    still without a run keeps its start time, and watch looks for it."""
+    gh = gh or (lambda path: gh_api(path, tries=1, timeout=START_CALL))
+    runs = {} if runs is None else runs
+    deadline = clock() + datetime.timedelta(seconds=START_BUDGET)
+
+    def fits(seconds):  # checked before each gh command and each wait
+        return clock() + datetime.timedelta(seconds=seconds) <= deadline
+    waiting = []
     for key, (registry, workflow, variable) in REGISTRIES.items():
         if env.get(variable) == "true":
             waiting.append(key)
@@ -202,19 +211,26 @@ def start(version, env, run=subprocess.run, gh=None, clock=utcnow, sleep=time.sl
     for attempt in range(1, DISPATCHES + 1):
         for key in waiting:
             registry, workflow, _ = REGISTRIES[key]
-            reg = runs.setdefault(key, {"at": iso(clock())})
-            reg["run"], reg["error"] = dispatch(run, workflow, version)
-            print(f"{registry}: {workflow} " + (f"run {reg['run']}" if reg["run"] else f"try {attempt}: {reg['error']}"))
+            reg = runs.setdefault(key, {"at": iso(clock()), "run": None, "error": "not tried: no time was left"})
+            if fits(START_CALL):
+                reg["run"], reg["error"] = dispatch(run, workflow, version)
+                print(f"{registry}: {workflow} " + (f"run {reg['run']}" if reg["run"] else f"try {attempt}: {reg['error']}"))
         waiting = [key for key in waiting if not runs[key]["run"]]
-        if not waiting or attempt == DISPATCHES:
-            break
-        for _ in range(2):  # GitHub may have started it despite the error
+        for _ in range(2 if attempt < DISPATCHES else 0):  # GitHub may have started it despite the error
+            if not waiting or not fits(LOOK_EVERY + START_CALL):
+                break
             sleep(LOOK_EVERY)
             for key in waiting:
-                runs[key]["run"] = find_run(gh, REGISTRIES[key][1], parse_time(runs[key]["at"]), run_name(version))
-                if runs[key]["run"]:
-                    print(f"{REGISTRIES[key][0]}: {REGISTRIES[key][1]} run {runs[key]['run']} started after all")
+                if fits(START_CALL):
+                    runs[key]["run"] = find_run(gh, REGISTRIES[key][1], parse_time(runs[key]["at"]), run_name(version),
+                                                clock=clock, sleep=sleep)
+                    if runs[key]["run"]:
+                        print(f"{REGISTRIES[key][0]}: {REGISTRIES[key][1]} run {runs[key]['run']} started after all")
             waiting = [key for key in waiting if not runs[key]["run"]]
+        if not waiting or not fits(START_CALL):
+            break
+    if waiting:
+        print(f"no run seen yet for {', '.join(REGISTRIES[key][1] for key in waiting)}: watch looks for them")
     for reg in runs.values():
         if reg.get("run") or not reg.get("error"):
             reg.pop("error", None)
@@ -429,9 +445,12 @@ def main(argv=None):
     version = args.version.removeprefix("v")
 
     if args.command == "start":
-        runs = start(version, os.environ)
-        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
-            out.write(f"runs={json.dumps(runs)}\n")
+        runs = {}
+        try:
+            start(version, os.environ, runs=runs)
+        finally:  # the release is public: watch must run, and it runs only with this output
+            with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+                out.write(f"runs={json.dumps(runs)}\n")
         return 0
 
     runs = json.loads(args.runs or "{}")
