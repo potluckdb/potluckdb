@@ -13,8 +13,15 @@ platform.
 - JSON functions
 - Math and percentile functions
 - The session extension, `sqlite_dbpage`, `dbstat` and `sqlite_stmt`
+- The `carray()` table-valued function, with `sqlite3_carray_bind()`
+- The RBU extension (`sqlite3rbu_*`). Its header, `sqlite3rbu.h`, is not in
+  the archive: take it from SQLite's source tree (`ext/rbu/`).
 - URI filenames, on by default
 - Thread safety: serialized (SQLite's default)
+
+The library exports every function that sqlite.org's own `sqlite3.dll`
+exports for the same SQLite version, on every platform. The `sqlite3_win32_*`
+functions exist only on Windows.
 
 ## What PotluckDB adds
 
