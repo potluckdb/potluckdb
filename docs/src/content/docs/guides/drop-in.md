@@ -42,9 +42,9 @@ Windows itself.
 ## Linking it in
 
 Programs that link SQLite into themselves can use the static library in
-`lib/static` (`libsqlite3.a`, or `sqlite3.lib` on Windows) with the headers
-in `include`. Its symbols stay private to your program, so it never clashes
-with another SQLite in the same process.
+`lib/static` (`libsqlite3.a`; on Windows also `sqlite3.lib`, for Microsoft's
+compiler) with the headers in `include`. Its symbols stay private to your
+program, so it never clashes with another SQLite in the same process.
 
 ## Check which library answers
 

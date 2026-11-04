@@ -5,8 +5,8 @@ description: Use PotluckDB from Go, in place of go-sqlite3.
 
 `github.com/potluckdb/potluckdb-go/sqlite3` is a drop-in replacement for
 [go-sqlite3](https://github.com/mattn/go-sqlite3) that runs on PotluckDB's
-build of SQLite. It works on Linux (glibc 2.28+ and musl) and macOS 11+, x64
-and ARM64; Windows follows in a later pre-release.
+build of SQLite. It works on Linux (glibc 2.28+ and musl), macOS 11+ and
+Windows, x64 and ARM64.
 
 ```sh
 go get github.com/potluckdb/potluckdb-go/sqlite3
@@ -24,8 +24,9 @@ db, err := sql.Open("sqlite3", "app.db")
 
 The rest of your code stays the same: the driver name `sqlite3`, connection
 string options, types, errors and build tags are go-sqlite3's (1.14.52). As
-with go-sqlite3, cgo must be on and a C compiler installed, but nothing of
-SQLite is compiled: the first build takes seconds instead of a minute.
+with go-sqlite3, cgo must be on and a C compiler installed (on Windows,
+MinGW-w64: see below), but nothing of SQLite is compiled: the first build
+takes seconds instead of a minute.
 
 ## Without changing imports
 
@@ -41,6 +42,11 @@ go mod tidy
 
 - On Alpine and other musl systems, build with `-tags musl`; a build with the
   wrong setting stops with a message saying what to do.
+- On Windows, use a MinGW-w64 C compiler for Microsoft's UCRT runtime, for
+  example [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) or MSYS2's
+  UCRT64, CLANG64 or CLANGARM64. With one for the older MSVCRT runtime
+  (MSYS2's MINGW64, TDM-GCC), programs work, but SQL's `sqrt()` can be off in
+  the last bit.
 - `go mod tidy` and `go mod download` fetch the library for every platform;
   `go build` and `go test` use only your platform's.
 - Databases sync in a later pre-release; for now it runs queries exactly like
